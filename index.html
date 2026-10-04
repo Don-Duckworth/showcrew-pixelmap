@@ -25,7 +25,10 @@
   </div>
   <button id="jobBtn" class="jobbtn" data-act="openJobs"><span class="lbl">JOB</span><span class="jobname">—</span><span class="jobmeta"></span><span class="caret">▾</span></button>
   <div id="modeSeg" class="seg" role="group" aria-label="Coordinate mode">
-    <button data-mode="screen">Per screen</button><button data-mode="global">Global canvas</button>
+    <button data-mode="screen">Per screen</button><button data-mode="global">Global<span class="lg"> canvas</span></button>
+  </div>
+  <div id="originSeg" class="seg" role="group" aria-label="Coordinate origin">
+    <button data-origin="tl" title="Top-left corner is 0,0 (Y down)">⌜ <span class="lg">0,0 </span>Top-left</button><button data-origin="center" title="Screen center is 0,0 (Y down)">✛ <span class="lg">0,0 </span>Center</button>
   </div>
 </header>
 <main id="app">

@@ -4,10 +4,12 @@
 
 export const EPS = 1e-9;
 export const isInt = v => Math.abs(v - Math.round(v)) < 1e-6;
-export const rnd = v => Math.round(v + (v >= 0 ? EPS : -EPS)); // half rounds up (away from zero)
+export const rnd = v => (v < 0 ? -Math.round(-v + EPS) : Math.round(v + EPS)); // halves round away from zero
 /** Exact value with 1 decimal when fractional ("1194.7"), plain integer otherwise. */
 export const fmt1 = v => (isInt(v) ? String(rnd(v)) : (Math.round(v * 10) / 10).toFixed(1));
 /** Human string: "1194.7 (≈1195)" or "1280". */
+/** Up to 2 decimals (panel counts): "18.67", "19". */
+export const fmt2 = v => (isInt(v) ? String(rnd(v)) : (Math.round(v * 100) / 100).toFixed(2));
 export const fmtFull = v => (isInt(v) ? String(rnd(v)) : `${fmt1(v)} (≈${rnd(v)})`);
 
 export function gcd(a, b) {
@@ -34,6 +36,29 @@ export function segments(s) {
   return out;
 }
 
+/** Panel-grid presets (W×H px). */
+export const PANEL_PRESETS = { led192: [192, 192], led384: [192, 384] };
+export function panelSize(s) {
+  const g = s.grid || {};
+  if (PANEL_PRESETS[g.mode]) return PANEL_PRESETS[g.mode];
+  if (g.mode === 'panel') return [Math.max(1, +g.panelW || 1), Math.max(1, +g.panelH || 1)];
+  return null;
+}
+/** Panel tiling from the top-left origin (partial panels at right/bottom). */
+export function panelInfo(s) {
+  const p = panelSize(s); if (!p) return null;
+  const [pw, ph] = p, cx = s.w / pw, cy = s.h / ph;
+  const fullCols = Math.floor(cx + 1e-9), fullRows = Math.floor(cy + 1e-9);
+  const cols = Math.ceil(cx - 1e-9), rows = Math.ceil(cy - 1e-9);
+  const partialW = s.w - fullCols * pw, partialH = s.h - fullRows * ph;
+  const whole = isInt(cx) && isInt(cy);
+  return { pw, ph, colsExact: cx, rowsExact: cy, cols, rows, fullCols, fullRows, total: cols * rows, fullTotal: fullCols * fullRows,
+    partialW: partialW > 1e-6 ? partialW : 0, partialH: partialH > 1e-6 ? partialH : 0, whole,
+    exactText: `${fmt2(cx)} × ${fmt2(cy)} panels`, countText: `${cols} × ${rows} = ${cols * rows}` };
+}
+/** Origin offset to subtract for display: top-left (0,0) or center. */
+export function originOf(s, origin) { return origin === 'center' ? { x: s.w / 2, y: s.h / 2 } : { x: 0, y: 0 }; }
+
 /** Custom grid lines (interior lines only). */
 export function gridLines(s) {
   const g = s.grid || {};
@@ -47,7 +72,11 @@ export function gridLines(s) {
     const sty = Math.max(1, +(g.stepY || g.step) || 1);
     for (let x = st; x < s.w - EPS && xs.length < 2000; x += st) xs.push(x);
     for (let y = sty; y < s.h - EPS && ys.length < 2000; y += sty) ys.push(y);
-  } else return null;
+  } else {
+    const p = panelSize(s); if (!p) return null;
+    for (let x = p[0]; x < s.w - EPS && xs.length < 2000; x += p[0]) xs.push(x);
+    for (let y = p[1]; y < s.h - EPS && ys.length < 2000; y += p[1]) ys.push(y);
+  }
   return { xs, ys };
 }
 
@@ -77,8 +106,9 @@ export function keyRows(s) {
   }
   const gl = gridLines(s);
   if (gl && gl.xs.length + gl.ys.length <= 80) {
-    gl.xs.forEach((x, i) => P('Custom grid', `V line ${i + 1}`, x, null));
-    gl.ys.forEach((y, i) => P('Custom grid', `H line ${i + 1}`, null, y));
+    const pn = panelSize(s), grp = pn ? `Panel grid ${pn[0]}×${pn[1]}` : 'Custom grid';
+    gl.xs.forEach((x, i) => P(grp, pn ? `Col ${i + 1} | ${i + 2}` : `V line ${i + 1}`, x, null));
+    gl.ys.forEach((y, i) => P(grp, pn ? `Row ${i + 1} | ${i + 2}` : `H line ${i + 1}`, null, y));
   }
   return rows;
 }

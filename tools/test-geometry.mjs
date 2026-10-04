@@ -15,4 +15,16 @@ assert.deepEqual(G.largestFit(3584, 1024, 16, 9), { w: 1820, h: 1024, x: 882, y:
 assert.deepEqual(G.largestFit(2560, 1280, 16, 9), { w: 2275, h: 1280, x: 142.5, y: 0 });
 assert.deepEqual(G.largestFit(256, 1280, 16, 9), { w: 256, h: 144, x: 0, y: 568 });
 assert.deepEqual(G.parseRatio('2.39:1'), [2.39, 1]);
+// v1.1 — panel grids (tiled from top-left)
+let pi = G.panelInfo({ w: 2560, h: 1280, grid: { mode: 'led192' } });
+assert.equal(pi.exactText, '13.33 × 6.67 panels'); assert.equal(pi.countText, '14 × 7 = 98'); assert.equal(pi.partialW, 64); assert.equal(pi.partialH, 128); assert.equal(pi.whole, false);
+pi = G.panelInfo({ w: 3584, h: 1024, grid: { mode: 'led192' } });
+assert.equal(pi.exactText, '18.67 × 5.33 panels'); assert.equal(pi.total, 114);
+pi = G.panelInfo({ w: 3584, h: 1024, grid: { mode: 'led384' } }); assert.deepEqual([pi.pw, pi.ph, pi.cols, pi.rows], [192, 384, 19, 3]);
+pi = G.panelInfo({ w: 3584, h: 1024, grid: { mode: 'panel', panelW: 256, panelH: 256 } }); assert.ok(pi.whole); assert.equal(pi.total, 56);
+assert.deepEqual(G.gridLines({ w: 2560, h: 1280, grid: { mode: 'led192' } }).xs.slice(0, 3), [192, 384, 576]);
+// v1.1 — center origin offsets (display = internal − origin)
+const o = G.originOf(C, 'center'); assert.deepEqual([0 - o.x, 0 - o.y], [-1280, -640]);
+assert.deepEqual(G.originOf(C, 'tl'), { x: 0, y: 0 });
+assert.equal(G.rnd(-597.33), -597); assert.equal(G.rnd(-0.5), -1); assert.equal(G.rnd(0.5), 1);
 console.log('geometry tests passed');

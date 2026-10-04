@@ -6,8 +6,12 @@ Plain HTML/CSS/JS, no build step. Deploy the static files (index.html, manifest.
 - Run locally: `python3 -m http.server 8765` in this folder → http://localhost:8765
 - Install on iPad/iPhone: open the HTTPS URL in Safari → Share → Add to Home Screen. After the first load it works offline.
 - Data: stored per device in localStorage. Use Job menu → Export JSON for backups.
+- Origin (per job, header toggle): **Top-left = 0,0** (default) or **Center = 0,0**. Y always increases downward (like media servers);
+  in center mode X is − left / + right and Y is − up / + down. Box X/Y = top-left corner; Center X/Y fields are also shown and editable.
+  Segments stay relative to the whole screen. Global-canvas coordinates are always top-left of the whole canvas.
+- Grids: N×M, every X px, LED panel 192×192, double LED 192×384, custom panel W×H — tiled from the top-left, partial panels tinted, counts in Coords.
 - Coordinates: pixel edges, 0 → W (a full-width box is x=0, w=W; last pixel column is W−1).
   Fractional values show 1 decimal plus ≈ rounded whole px (half rounds up); tap-to-copy copies the rounded value.
   PiP boxes always use whole pixels.
-- Tests: `node tools/test-geometry.mjs` (math). Icons: `node tools/make-icons.mjs` (needs playwright).
+- Tests: `node tools/test-geometry.mjs` (math); `node tools/browser-test.mjs` (headless iPad/iPhone checks, needs playwright + a local server). Icons: `node tools/make-icons.mjs` (needs playwright).
 - Updating: bump `VERSION` in sw.js when you change files so installed copies refresh.

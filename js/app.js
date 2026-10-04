@@ -15,6 +15,12 @@ const job = () => S.jobs.find(j => j.id === S.currentJobId) || S.jobs[0];
 const scr = () => { const j = job(); return j.screens.find(s => s.id === j.currentScreenId) || j.screens[0]; };
 const box = () => (scr().boxes || []).find(b => b.id === ui.sel) || null;
 const isGlobal = () => job().mode === 'global';
+// Display origin: 'tl' (top-left = 0,0, default) or 'center' (screen center = 0,0). Y always increases downward.
+// Internal storage is always top-left based; these convert for display / entry only.
+const isCtr = () => job().origin === 'center';
+const offX = s => (isCtr() ? s.w / 2 : 0), offY = s => (isCtr() ? s.h / 2 : 0);
+const OX = (s, x) => (x == null ? null : x - offX(s)), OY = (s, y) => (y == null ? null : y - offY(s));
+const n1 = v => String(Math.round(v * 10) / 10);
 let saveT = 0;
 function persist() { job().updated = Date.now(); clearTimeout(saveT); saveT = setTimeout(() => Store.save(S), 150); }
 function commit(parts = 'all') { persist(); render(parts); }
@@ -41,6 +47,7 @@ function renderTop() {
   $('#jobBtn .jobname').textContent = j.name;
   $('#jobBtn .jobmeta').textContent = `${j.screens.length} screen${j.screens.length === 1 ? '' : 's'}`;
   document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === j.mode));
+  document.querySelectorAll('#originSeg button').forEach(b => b.classList.toggle('on', b.dataset.origin === (j.origin || 'tl')));
   document.title = `${j.name} · ShowCrew PixelMap`;
 }
 
@@ -79,8 +86,8 @@ function renderStatus() {
   let t = `<b>${esc(s.name)}</b> ${s.w}×${s.h}`;
   const p = ui.hover || ui.probe;
   if (ui.view === 'canvas' && gl) t = `<b>Global canvas</b> — drag screens to reposition (snaps to edges)`;
-  else if (p) t += ` <span class="sep">│</span> ⌖ x <b>${G.rnd(p.x)}</b> y <b>${G.rnd(p.y)}</b>${gl ? ` <span class="g">(global ${G.rnd(p.x + s.x)}, ${G.rnd(p.y + s.y)})</span>` : ''}`;
-  if (b) t += ` <span class="sep">│</span> <span style="color:${b.color}">■</span> ${esc(b.name)} x${b.x} y${b.y} ${b.w}×${b.h}`;
+  else if (p) t += ` <span class="sep">│</span> ⌖ x <b>${G.rnd(OX(s, p.x))}</b> y <b>${G.rnd(OY(s, p.y))}</b>${gl ? ` <span class="g">(global ${G.rnd(p.x + s.x)}, ${G.rnd(p.y + s.y)})</span>` : ''}`;
+  if (b) t += ` <span class="sep">│</span> <span style="color:${b.color}">■</span> ${esc(b.name)} ${isCtr() ? 'TL ' : ''}x${n1(OX(s, b.x))} y${n1(OY(s, b.y))} ${b.w}×${b.h}`;
   $('#status').innerHTML = t;
 }
 
@@ -106,14 +113,16 @@ function aspectBlock(s) {
 function panelCoords() {
   const s = scr(), gl = isGlobal(), rows = G.keyRows(s);
   let html = aspectBlock(s);
-  html += `<p class="hint">Tap a row to copy <b>x, y</b> (rounded whole px). Fractions show 1 decimal + ≈ rounded value. Edges run 0→W (last pixel column = W−1).${gl ? ' Tap the global columns to copy global coords.' : ''}</p>`;
+  html += originHint(s) + panelCard(s);
+  html += `<p class="hint">Tap a row to copy <b>x, y</b> (rounded whole px). Fractions show 1 decimal + ≈ rounded value. Edges run 0→W (last pixel column = W−1).${gl ? ` Tap the global columns to copy global coords. <b>Global is always top-left of the whole canvas</b>${isCtr() ? '; local columns use this screen\'s center' : ''}.` : ''}</p>`;
   let grp = null;
   html += `<table class="ro ${gl ? 'gl' : ''}"><thead><tr><th>Point</th><th>X</th><th>Y</th>${gl ? '<th class="g">Global X</th><th class="g">Global Y</th>' : ''}</tr></thead><tbody>`;
   for (const r of rows) {
     if (r.group !== grp) { grp = r.group; html += `<tr class="grp"><td colspan="${gl ? 5 : 3}">${esc(grp)}</td></tr>`; }
-    const xs = r.x2 != null ? `${val(r.x)}<span class="v dim"> / </span>${val(r.x2)}` : val(r.x);
-    const ct = r.x2 != null ? `${G.rnd(r.x)}, ${G.rnd(r.x2)}` : copyText(r.x, r.y);
-    html += `<tr data-act="copy" data-copy="${ct}"><td>${esc(r.label)}</td><td>${xs}</td><td>${val(r.y)}</td>`;
+    const lx = OX(s, r.x), lx2 = r.x2 != null ? OX(s, r.x2) : null, ly = OY(s, r.y);
+    const xs = lx2 != null ? `${val(lx)}<span class="v dim"> / </span>${val(lx2)}` : val(lx);
+    const ct = lx2 != null ? `${G.rnd(lx)}, ${G.rnd(lx2)}` : copyText(lx, ly);
+    html += `<tr data-act="copy" data-copy="${ct}"><td>${esc(r.label)}</td><td>${xs}</td><td>${val(ly)}</td>`;
     if (gl) {
       const gx = r.x == null ? null : r.x + s.x, gy = r.y == null ? null : r.y + s.y;
       html += `<td class="g" data-act="copy" data-copy="${r.x2 != null ? `${G.rnd(gx)}, ${G.rnd(r.x2 + s.x)}` : copyText(gx, gy)}">${r.x2 != null ? `${val(gx)}<span class="v dim"> / </span>${val(r.x2 + s.x)}` : val(gx)}</td><td class="g">${val(gy)}</td>`;
@@ -122,13 +131,24 @@ function panelCoords() {
   }
   html += `</tbody></table>`;
   if (s.boxes.length) {
-    html += `<div class="lbl mt">PIP BOXES</div><table class="ro"><thead><tr><th>Box</th><th>X, Y</th><th>W×H</th><th>Center</th></tr></thead><tbody>`;
-    for (const b of s.boxes) html += `<tr data-act="copy" data-copy="${b.x}, ${b.y}, ${b.w}, ${b.h}"><td><span style="color:${b.color}">■</span> ${esc(b.name)}</td><td><span class="v">${b.x}, ${b.y}</span>${gl ? `<span class="r">G ${b.x + s.x}, ${b.y + s.y}</span>` : ''}</td><td><span class="v">${b.w}×${b.h}</span></td><td>${val(b.x + b.w / 2)} ${val(b.y + b.h / 2)}</td></tr>`;
+    html += `<div class="lbl mt">PIP BOXES</div><table class="ro"><thead><tr><th>Box</th><th>${isCtr() ? 'TL X, Y' : 'X, Y'}</th><th>W×H</th><th>Center</th></tr></thead><tbody>`;
+    for (const b of s.boxes) html += `<tr data-act="copy" data-copy="${G.rnd(OX(s, b.x))}, ${G.rnd(OY(s, b.y))}, ${b.w}, ${b.h}"><td><span style="color:${b.color}">■</span> ${esc(b.name)}</td><td><span class="v">${n1(OX(s, b.x))}, ${n1(OY(s, b.y))}</span>${gl ? `<span class="r">G ${b.x + s.x}, ${b.y + s.y}</span>` : ''}</td><td><span class="v">${b.w}×${b.h}</span></td><td>${val(OX(s, b.x + b.w / 2))} ${val(OY(s, b.y + b.h / 2))}</td></tr>`;
     html += `</tbody></table>`;
   }
   return html;
 }
 
+function originHint(s) {
+  return isCtr()
+    ? `<p class="hint origin-hint"><b>Origin: screen center = 0,0.</b> X − left / + right · Y − up / + down (Y-down, like media servers). Segments stay relative to the whole screen.</p>`
+    : `<p class="hint origin-hint"><b>Origin: top-left = 0,0.</b> X increases → right · Y increases ↓ down.</p>`;
+}
+function panelCard(s) {
+  const p = G.panelInfo(s); if (!p) return '';
+  return `<div class="card panel-info"><div class="lbl">LED PANELS ${p.pw}×${p.ph} · FROM TOP-LEFT</div>
+    <div class="hud-stat"><div><div class="lbl">COLS × ROWS</div><div class="big">${p.cols}<i>×</i>${p.rows}</div></div><div><div class="lbl">TOTAL</div><div class="big">${p.total}</div><div class="sub">${p.whole ? 'all full panels' : `${p.fullTotal} full + ${p.total - p.fullTotal} partial`}</div></div></div>
+    ${p.whole ? `<p class="hint">${p.exactText} — exact fit.</p>` : `<p class="warn">⚠ ${p.exactText} — not a whole number.${p.partialW ? ` Last column ${F(p.partialW)} px wide.` : ''}${p.partialH ? ` Last row ${F(p.partialH)} px tall.` : ''}</p>`}</div>`;
+}
 function numInput(f, v, label, extra = '') {
   return `<label class="fld"><span>${label}</span><input class="inp num" inputmode="decimal" type="number" data-f="${f}" data-bind="${f}" value="${v}" ${extra}></label>`;
 }
@@ -152,25 +172,26 @@ function panelBoxes() {
 
   html += `<div class="lbl mt">BOXES ON ${esc(s.name.toUpperCase())}</div>`;
   if (!s.boxes.length) html += `<p class="hint">No boxes yet. Add one above, or use <b>Ratios</b> → Add.</p>`;
-  html += `<div class="box-list">${s.boxes.map(x => `<button class="box-item ${x.id === ui.sel ? 'on' : ''}" data-act="selBox" data-id="${x.id}"><span class="sw" style="background:${x.color}"></span><span class="bn">${esc(x.name)}</span><span class="bd">${x.w}×${x.h} @ ${x.x},${x.y}</span></button>`).join('')}</div>`;
+  html += `<div class="box-list">${s.boxes.map(x => `<button class="box-item ${x.id === ui.sel ? 'on' : ''}" data-act="selBox" data-id="${x.id}"><span class="sw" style="background:${x.color}"></span><span class="bn">${esc(x.name)}</span><span class="bd">${x.w}×${x.h} @ ${n1(OX(s, x.x))},${n1(OY(s, x.y))}</span></button>`).join('')}</div>`;
 
   if (b) {
     const cx = b.x + b.w / 2, cy = b.y + b.h / 2, a = G.aspect(b.w, b.h);
     html += `<div class="card sel"><div class="row"><input class="inp grow" data-f="box.name" data-bind="box.name" value="${esc(b.name)}" aria-label="Box name">
       <input type="color" class="inp color" data-f="box.color" data-bind="box.color" value="${b.color}" aria-label="Box color"></div>
       <div class="row wrap swatches">${Store.BOX_COLORS.map(c => `<button class="swb" style="background:${c}" data-act="boxColor" data-c="${c}" aria-label="${c}"></button>`).join('')}</div>
-      <div class="grid4">${numInput('box.x', b.x, 'X')}${numInput('box.y', b.y, 'Y')}${numInput('box.w', b.w, 'W')}${numInput('box.h', b.h, 'H')}</div>
+      <div class="grid4">${numInput('box.x', n1(OX(s, b.x)), 'Top-left X', 'step="any"')}${numInput('box.y', n1(OY(s, b.y)), 'Top-left Y', 'step="any"')}${numInput('box.w', b.w, 'W')}${numInput('box.h', b.h, 'H')}</div>
+      <div class="grid4">${numInput('box.cx', n1(OX(s, cx)), 'Center X', 'step="any"')}${numInput('box.cy', n1(OY(s, cy)), 'Center Y', 'step="any"')}<div class="fld span2"><span>&nbsp;</span><p class="hint">X/Y = box's <b>top-left corner</b>; Center X/Y = its middle. Both editable${isCtr() ? ', measured from the <b>screen center</b>' : ''}. Y↓.</p></div></div>
       <label class="tgl"><input type="checkbox" data-bind="box.lock" ${b.lock ? 'checked' : ''}><span>Lock aspect ratio (${a.text})</span></label>
       <div class="readout">
-        <div><span class="lbl">CENTER</span>${val(cx)} , ${val(cy)}</div>
-        <div><span class="lbl">RIGHT / BOTTOM</span><span class="v">${b.x + b.w}, ${b.y + b.h}</span></div>
+        <div><span class="lbl">CENTER</span>${val(OX(s, cx))} , ${val(OY(s, cy))}</div>
+        <div><span class="lbl">RIGHT / BOTTOM</span><span class="v">${n1(OX(s, b.x + b.w))}, ${n1(OY(s, b.y + b.h))}</span></div>
         ${gl ? `<div><span class="lbl">GLOBAL X,Y</span><span class="v g">${b.x + s.x}, ${b.y + s.y}</span></div><div><span class="lbl">GLOBAL CENTER</span>${val(cx + s.x)} , ${val(cy + s.y)}</div>` : ''}
         <div><span class="lbl">RATIO</span><span class="v">${a.text}</span><span class="r">${a.decText}</span></div>
       </div>
       <div class="row wrap"><button class="btn sm" data-act="center" data-a="h">↔ Center H</button><button class="btn sm" data-act="center" data-a="v">↕ Center V</button><button class="btn sm primary" data-act="center" data-a="both">✛ Center both</button></div>
       ${n > 1 ? `<div class="row"><select class="inp grow" id="segPick">${G.segments(s).map(g => `<option value="${g.i}" ${ui.segPick == g.i ? 'selected' : ''}>Segment ${g.n} (${F(g.x0)}–${F(g.x1)})</option>`).join('')}</select>
         <button class="btn sm" data-act="centerSeg">Center in seg</button><button class="btn sm" data-act="fitSeg">Fit seg</button></div>` : ''}
-      <div class="row wrap"><button class="btn sm" data-act="copyBox">⧉ Copy X,Y,W,H</button><button class="btn sm" data-act="dupBox">Duplicate</button><button class="btn sm" data-act="frontBox">To front</button><button class="btn sm danger" data-act="delBox">Delete</button></div>
+      <div class="row wrap"><button class="btn sm" data-act="copyBox">⧉ Copy X,Y,W,H</button><button class="btn sm" data-act="copyBoxCenter">⧉ Copy center</button><button class="btn sm" data-act="dupBox">Duplicate</button><button class="btn sm" data-act="frontBox">To front</button><button class="btn sm danger" data-act="delBox">Delete</button></div>
     </div>`;
   }
   return html;
@@ -198,12 +219,12 @@ function panelRatios() {
   html += `<div class="card"><div class="lbl">LARGEST CENTERED FIT</div>
     ${n > 1 ? `<label class="fld"><span>Fit inside</span><select class="inp" data-bind="ratioTarget"><option value="-1">Whole screen (${s.w}×${s.h})</option>${segs.map(g => `<option value="${g.i}" ${tgt == g.i ? 'selected' : ''}>Segment ${g.n} (${F(g.w)}×${s.h})</option>`).join('')}</select></label>` : ''}
     <label class="fld"><span>Custom ratio</span><input class="inp" data-f="customRatio" data-bind="customRatio" value="${esc(ui.customRatio ?? '2.39:1')}" placeholder="e.g. 2.39:1 or 5:4"></label>
-    <table class="ro fit"><thead><tr><th>Ratio</th><th>W×H</th><th>X, Y</th><th></th></tr></thead><tbody>`;
+    ${originHint(s)}<table class="ro fit"><thead><tr><th>Ratio</th><th>W×H</th><th>Top-left X, Y</th><th></th></tr></thead><tbody>`;
   for (const [label, rw, rh] of ratios) {
     const f = G.largestFit(area.w, area.h, rw, rh); if (!f) continue;
     const x = area.x0 + f.x, y = f.y;
     html += `<tr><td><b>${esc(label)}</b></td><td data-act="copy" data-copy="${f.w}, ${f.h}"><span class="v">${f.w}×${f.h}</span></td>
-      <td data-act="copy" data-copy="${G.rnd(x)}, ${G.rnd(y)}">${val(x)} ${val(y)}</td>
+      <td data-act="copy" data-copy="${G.rnd(OX(s, x))}, ${G.rnd(OY(s, y))}">${val(OX(s, x))} ${val(OY(s, y))}${isCtr() ? `<span class="r">center ${F(OX(s, x + f.w / 2))}, ${F(OY(s, y + f.h / 2))}</span>` : ''}</td>
       <td><button class="btn sm primary" data-act="addFit" data-w="${f.w}" data-h="${f.h}" data-x="${x}" data-y="${y}" data-n="${esc(label)}">＋ Box</button></td></tr>`;
   }
   html += `</tbody></table><p class="hint">W/H are floored to whole pixels so the box always fits; X/Y center it (½-px offsets shown with ≈ rounding; boxes use the rounded value).</p></div>`;
@@ -219,7 +240,10 @@ function panelScreen() {
     ${gl ? `<div class="lbl mt">GLOBAL CANVAS OFFSET</div><div class="grid2">${numInput('scr.x', s.x, 'Offset X')}${numInput('scr.y', s.y, 'Offset Y')}</div>` : ''}
   </div>
   <div class="card"><div class="lbl">CUSTOM GRID</div>
-    <div class="seg full">${[['off', 'Off'], ['nm', 'N × M'], ['px', 'Every X px']].map(([k, l]) => `<button class="${g.mode === k ? 'on' : ''}" data-act="gridMode" data-m="${k}">${l}</button>`).join('')}</div>
+    <div class="seg full wrap">${[['off', 'Off'], ['nm', 'N × M'], ['px', 'Every X px'], ['led192', 'LED 192×192'], ['led384', 'Double LED 192×384'], ['panel', 'Custom panel']].map(([k, l]) => `<button class="${g.mode === k ? 'on' : ''}" data-act="gridMode" data-m="${k}">${l}</button>`).join('')}</div>
+    ${g.mode === 'panel' ? `<div class="grid2">${numInput('grid.panelW', g.panelW, 'Panel W px', 'min="1"')}${numInput('grid.panelH', g.panelH, 'Panel H px', 'min="1"')}</div>
+      <div class="row wrap">${['250x250', '500x500', '500x1000', '192x192', '160x160', '128x128'].map(p => `<button class="chip sm" data-act="panelPreset" data-p="${p}">${p.replace('x', '×')}</button>`).join('')}</div>` : ''}
+    ${panelCard(s)}
     ${g.mode === 'nm' ? `<div class="grid2">${numInput('grid.cols', g.cols, 'Columns (N)', 'min="1"')}${numInput('grid.rows', g.rows, 'Rows (M)', 'min="1"')}</div>` : ''}
     ${g.mode === 'px' ? `<div class="grid2">${numInput('grid.step', g.step, 'Step px', 'min="1"')}</div>` : ''}
   </div>
@@ -227,8 +251,8 @@ function panelScreen() {
   <button class="btn sm" data-act="dupScreen">Duplicate</button><button class="btn sm danger" data-act="delScreen">Delete screen</button></div>`;
 }
 
-const EXP_ITEMS = [['bg', 'Background'], ['outline', 'Outline / border'], ['crosshair', 'Center crosshair'], ['centerLines', 'Center lines'], ['thirds', 'Thirds'], ['grid', 'Custom grid'],
-  ['segDividers', 'Segment dividers'], ['segCenters', 'Segment centers'], ['segGuides', 'Segment guides (center/thirds)'], ['boxes', 'PiP boxes'], ['labels', 'Labels (name + resolution)'], ['coordLabels', 'Coordinate labels']];
+const EXP_ITEMS = [['bg', 'Background'], ['outline', 'Outline / border'], ['crosshair', 'Center crosshair'], ['centerLines', 'Center lines'], ['thirds', 'Thirds'], ['grid', 'Custom / panel grid'],
+  ['segDividers', 'Segment dividers'], ['segCenters', 'Segment centers'], ['segGuides', 'Segment guides (center/thirds)'], ['boxes', 'PiP boxes'], ['labels', 'Labels (name + resolution)'], ['coordLabels', 'Coordinate labels'], ['panelLabels', 'Panel numbers (C# R#)']];
 function panelExport() {
   const ex = job().exportSettings, s = scr();
   const color = (k, l) => `<label class="fld cpick"><span>${l}</span><input type="color" class="inp color" data-bind="ex.${k}" value="${ex[k]}"></label>`;
@@ -237,7 +261,7 @@ function panelExport() {
     <div class="card"><div class="lbl">STYLE</div><div class="grid3">${color('bg', 'Background')}${color('line', 'Lines / guides')}${color('seg', 'Segments')}${color('box', 'PiP boxes')}${color('text', 'Text')}</div>
     <label class="tgl"><input type="checkbox" data-bind="ex.boxOwnColors" ${ex.boxOwnColors ? 'checked' : ''}><span>Use each box's own color</span></label>
     <div class="grid2">${numInput('ex.lw', ex.lw, 'Line width px', 'min="1" max="64"')}${numInput('ex.textSize', ex.textSize, 'Text size px (0 = auto)', 'min="0"')}</div>
-    <p class="hint">Saved per job. Lines are drawn on whole pixels at native resolution.</p></div>
+    <p class="hint">Saved per job. Lines are drawn on whole pixels at native resolution. Coordinate labels use the job's origin (${isCtr() ? 'center = 0,0' : 'top-left = 0,0'}).</p></div>
     <div class="row wrap"><button class="btn primary grow" data-act="exportOne">⤓ Export ${esc(s.name)} (${s.w}×${s.h})</button><button class="btn grow" data-act="exportAll">⤓ Export all screens (${job().screens.length})</button></div>
     <div id="exportResults"></div>`;
 }
@@ -277,10 +301,10 @@ function drawStage() {
   ctx.save(); ctx.shadowColor = 'rgba(0,229,255,0.55)'; ctx.shadowBlur = 18; ctx.fillStyle = PREVIEW_COLORS.bg; ctx.fillRect(0, 0, s.w, s.h); ctx.restore();
   const segs = G.segCount(s) > 1;
   drawScreen(ctx, s, {
-    u, lw: 1.1, glow: true, colors: PREVIEW_COLORS, boxOwnColors: true, fs: 11 * u, selectedId: ui.sel, snapLines: ui.snapLines,
+    u, lw: 1.1, glow: true, colors: PREVIEW_COLORS, origin: G.originOf(s, j.origin), boxOwnColors: true, fs: 11 * u, selectedId: ui.sel, snapLines: ui.snapLines,
     handles: true, handleR: 9, probe: ui.drag ? null : ui.probe,
     inc: { bg: true, outline: true, crosshair: v.center, centerLines: v.centerLines, thirds: v.thirds, grid: v.grid, segDividers: v.segments && segs,
-      segCenters: v.segments && segs && v.center, segGuides: v.segGuides && segs, boxes: v.boxes, labels: v.labels, coordLabels: v.labels },
+      segCenters: v.segments && segs && v.center, segGuides: v.segGuides && segs, boxes: v.boxes, labels: v.labels, coordLabels: v.labels, panelLabels: v.labels && v.grid && j.exportSettings.inc.panelLabels },
   });
 }
 
@@ -365,7 +389,8 @@ cv.addEventListener('pointermove', e => {
 });
 function syncBoxFields() {
   const b = box(); if (!b) return;
-  for (const k of ['x', 'y', 'w', 'h']) { const el = document.querySelector(`[data-f="box.${k}"]`); if (el && el !== document.activeElement) el.value = b[k]; }
+  const s = scr(), v = { x: n1(OX(s, b.x)), y: n1(OY(s, b.y)), w: b.w, h: b.h, cx: n1(OX(s, b.x + b.w / 2)), cy: n1(OY(s, b.y + b.h / 2)) };
+  for (const k in v) { const el = document.querySelector(`[data-f="box.${k}"]`); if (el && el !== document.activeElement) el.value = v[k]; }
 }
 function endDrag() {
   if (!ui.drag) return;
@@ -449,7 +474,7 @@ async function doExport(screens) {
   for (const s of screens) {
     if (s.w * s.h > 16777216) toast(`⚠ ${s.name} is ${s.w}×${s.h} — may exceed iOS canvas limit (16.7 MP)`);
     try {
-      const blob = await screenToBlob(s, ex);
+      const blob = await screenToBlob(s, ex, job().origin);
       const file = new File([blob], `${fileSafe(job().name)}_${fileSafe(s.name)}_${s.w}x${s.h}.png`, { type: 'image/png' });
       ui.exportFiles.push({ file, url: URL.createObjectURL(blob), w: s.w, h: s.h });
     } catch (e) { toast(`${s.name}: ${e.message}`); }
@@ -479,11 +504,13 @@ const ACTIONS = {
   center: el => { const b = box(), s = scr(); if (!b) return; const a = el.dataset.a; if (a !== 'v') b.x = G.rnd((s.w - b.w) / 2); if (a !== 'h') b.y = G.rnd((s.h - b.h) / 2); commit(['panel']); },
   centerSeg: () => { const b = box(), s = scr(), g = G.segments(s)[+($('#segPick')?.value || 0)]; ui.segPick = g.i; b.x = G.rnd(g.cx - b.w / 2); b.y = G.rnd((s.h - b.h) / 2); commit(['panel']); },
   fitSeg: () => { const b = box(), s = scr(), g = G.segments(s)[+($('#segPick')?.value || 0)]; ui.segPick = g.i; b.x = G.rnd(g.x0); b.w = G.rnd(g.x1) - b.x; b.y = 0; b.h = s.h; commit(['panel']); },
-  copyBox: () => { const b = box(); b && copy(`${b.x}, ${b.y}, ${b.w}, ${b.h}`); },
+  copyBox: () => { const b = box(), s = scr(); b && copy(`${G.rnd(OX(s, b.x))}, ${G.rnd(OY(s, b.y))}, ${b.w}, ${b.h}`); },
+  copyBoxCenter: () => { const b = box(), s = scr(); b && copy(`${G.rnd(OX(s, b.x + b.w / 2))}, ${G.rnd(OY(s, b.y + b.h / 2))}`); },
   dupBox: () => { const b = box(); if (b) addBoxRect(b.w, b.h, b.x + 40, b.y + 40, b.name + ' copy'); },
   frontBox: () => { const s = scr(), b = box(); if (!b) return; s.boxes = s.boxes.filter(x => x !== b).concat(b); commit(['panel']); },
   delBox: () => delBox(),
-  gridMode: el => { scr().grid.mode = el.dataset.m; if (el.dataset.m !== 'off') job().view.grid = true; commit(); },
+  gridMode: el => { scr().grid.mode = el.dataset.m; if (el.dataset.m !== 'off') { job().view.grid = true; job().exportSettings.inc.grid = true; } commit(); },
+  panelPreset: el => { const [w, h] = el.dataset.p.split('x').map(Number); Object.assign(scr().grid, { mode: 'panel', panelW: w, panelH: h }); commit(); },
   exportOne: () => doExport([scr()]),
   exportAll: () => doExport(job().screens.slice()),
   shareFiles: () => shareOrDownload(ui.exportFiles.map(f => f.file)),
@@ -508,6 +535,10 @@ $('#modeSeg').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   job().mode = b.dataset.mode; if (b.dataset.mode !== 'global') ui.view = 'screen'; commit();
 });
+$('#originSeg').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  job().origin = b.dataset.origin; commit(); toast(b.dataset.origin === 'center' ? 'Origin: screen center = 0,0 (Y down)' : 'Origin: top-left = 0,0');
+});
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 
 // bound inputs
@@ -528,8 +559,10 @@ document.addEventListener('change', e => {
     else if (k === 'color') b.color = v;
     else if (k === 'lock') b.lock = v;
     else {
-      const x = int(n, k === 'w' || k === 'h' ? 1 : -1e7); if (x == null) return render(['panel']);
-      if (b.lock && (k === 'w' || k === 'h')) { const r = b.w / b.h; if (k === 'w') { b.w = x; b.h = Math.max(1, G.rnd(x / r)); } else { b.h = x; b.w = Math.max(1, G.rnd(x * r)); } }
+      const x = int(n, k === 'w' || k === 'h' ? 1 : -1e7); if (x == null || !Number.isFinite(n)) return render(['panel']);
+      if (k === 'x') b.x = G.rnd(n + offX(s)); else if (k === 'y') b.y = G.rnd(n + offY(s));
+      else if (k === 'cx') b.x = G.rnd(n + offX(s) - b.w / 2); else if (k === 'cy') b.y = G.rnd(n + offY(s) - b.h / 2);
+      else if (b.lock && (k === 'w' || k === 'h')) { const r = b.w / b.h; if (k === 'w') { b.w = x; b.h = Math.max(1, G.rnd(x / r)); } else { b.h = x; b.w = Math.max(1, G.rnd(x * r)); } }
       else b[k] = x;
     }
     return commit(['panel', 'screens']);

@@ -33,7 +33,14 @@ export function drawScreen(ctx, s, o) {
 
   if (inc.grid) {
     const gl = G.gridLines(s);
-    if (gl) { ctx.strokeStyle = C.line; ctx.setLineDash([]); ctx.lineWidth = Math.max(u * 0.75, lw * 0.6); gl.xs.forEach(x => vline(x, 0.32)); gl.ys.forEach(y => hline(y, 0.32)); ctx.lineWidth = lw; }
+    const pi = G.panelInfo(s);
+    if (pi && (pi.partialW || pi.partialH)) {
+      ctx.fillStyle = hexA(C.seg, 0.09);
+      if (pi.partialW) ctx.fillRect(w - pi.partialW, 0, pi.partialW, h);
+      if (pi.partialH) ctx.fillRect(0, h - pi.partialH, w - pi.partialW, pi.partialH);
+    }
+    if (gl && pi) { ctx.strokeStyle = C.line; ctx.setLineDash([]); ctx.lineWidth = Math.max(u, lw * 0.8); gl.xs.forEach(x => vline(x, 0.5)); gl.ys.forEach(y => hline(y, 0.5)); ctx.lineWidth = lw; }
+    else if (gl) { ctx.strokeStyle = C.line; ctx.setLineDash([]); ctx.lineWidth = Math.max(u * 0.75, lw * 0.6); gl.xs.forEach(x => vline(x, 0.32)); gl.ys.forEach(y => hline(y, 0.32)); ctx.lineWidth = lw; }
   }
   if (segs.length > 1) {
     if (inc.segGuides) {
@@ -81,15 +88,40 @@ export function drawScreen(ctx, s, o) {
     ctx.fillStyle = opt.color || C.text; ctx.fillText(t, tx, ty); ctx.lineWidth = lw;
   };
   const F = G.fmt1;
+  // Display coordinates relative to the chosen origin (top-left or center). Y always increases downward.
+  const org = o.origin || { x: 0, y: 0 }, centered = org.x !== 0 || org.y !== 0;
+  const X = v => F(v - org.x), Y = v => F(v - org.y);
+  const pinfo = inc.grid ? G.panelInfo(s) : null;
+  // Panel numbers (C# R#) drawn from the top-left origin
+  if (pinfo && inc.panelLabels && pinfo.total <= 4000) {
+    const pf = Math.min(fs * 0.75, pinfo.pw * 0.16, pinfo.ph * 0.2);
+    if (pf >= 7 * u) for (let r = 0; r < pinfo.rows; r++) for (let c = 0; c < pinfo.cols; c++) {
+      // centered in the visible part of each panel (keeps corners free for coordinate labels)
+      const x0 = c * pinfo.pw, y0 = r * pinfo.ph, vw = Math.min(pinfo.pw, w - x0), vh = Math.min(pinfo.ph, h - y0), t = `C${c + 1} R${r + 1}`;
+      ctx.font = `600 ${pf}px ${MONO}`; const tw = ctx.measureText(t).width; if (tw > vw * 0.95 || vh < pf * 1.4) continue;
+      ctx.globalAlpha = 0.6; ctx.fillStyle = C.text; ctx.fillText(t, x0 + (vw - tw) / 2, y0 + vh / 2 + pf * 0.35); ctx.globalAlpha = 1;
+    }
+  }
+  // Corner labels: origin is unmistakably at the top-left (or center), W,H at bottom-right
+  if (inc.coordLabels) {
+    const cf = fs * 0.8;
+    text(`${X(0)},${Y(0)}${centered ? '' : '  x→ y↓'}`, cf * 0.35, cf * 1.25, { fs: cf, bold: !centered });
+    text(`${X(w)},${Y(0)}`, w - cf * 0.35, cf * 1.25, { fs: cf, align: 'right' });
+    text(`${X(0)},${Y(h)}`, cf * 0.35, h - cf * 0.45, { fs: cf });
+    text(`${X(w)},${Y(h)}`, w - cf * 0.35, h - cf * 0.45, { fs: cf, align: 'right' });
+  }
+  let ly = fs * 2.75;
   if (inc.labels) {
-    text(`${s.name}  ${w}×${h}`, fs * 0.8, fs * 1.6, { bold: true, fs: fs * 1.25 });
-    if (segs.length > 1) text(`${segs.length} segments × ${F(segs[0].w)}×${h}`, fs * 0.8, fs * 3.0, { color: C.seg });
+    text(`${s.name}  ${w}×${h}`, fs * 0.6, ly, { bold: true, fs: fs * 1.25 }); ly += fs * 1.4;
+    if (segs.length > 1) { text(`${segs.length} segments × ${F(segs[0].w)}×${h}`, fs * 0.6, ly, { color: C.seg }); ly += fs * 1.3; }
+    if (pinfo) { text(`Panels ${pinfo.pw}×${pinfo.ph}: ${pinfo.countText}${pinfo.whole ? '' : ` (${pinfo.exactText})`}`, fs * 0.6, ly, { color: C.text, fs: fs * 0.85 }); ly += fs * 1.2; }
+    if (centered) { text('Origin 0,0 = center · Y down', fs * 0.6, ly, { fs: fs * 0.8, color: C.line }); ly += fs * 1.2; }
   }
   if (inc.boxes && (inc.labels || inc.coordLabels)) {
     for (const b of s.boxes || []) {
       const c = o.boxOwnColors ? b.color : C.box, lines = [];
       if (inc.labels) lines.push([b.name, c, true, 1]);
-      if (inc.coordLabels) { lines.push([`x${b.x} y${b.y}`, C.text, false, 0.85]); lines.push([`${b.w}×${b.h}`, C.text, false, 0.85]); lines.push([`⌖ ${F(b.x + b.w / 2)}, ${F(b.y + b.h / 2)}`, C.text, false, 0.85]); }
+      if (inc.coordLabels) { lines.push([`${centered ? 'TL ' : ''}x${X(b.x)} y${Y(b.y)}`, C.text, false, 0.85]); lines.push([`${b.w}×${b.h}`, C.text, false, 0.85]); lines.push([`ctr ${X(b.x + b.w / 2)}, ${Y(b.y + b.h / 2)}`, C.text, false, 0.85]); }
       const lh = fs * 1.25, need = lh * lines.length + fs * 0.6;
       // inside top-left when the box is tall enough, otherwise stacked just below (or above) the box
       let y0 = b.h >= need + fs * 2 ? b.y + fs * 1.2 : (b.y + b.h + need <= h ? b.y + b.h + fs * 1.1 : b.y - need + fs * 0.9);
@@ -97,16 +129,14 @@ export function drawScreen(ctx, s, o) {
     }
   }
   if (inc.coordLabels) {
-    text(`${F(w / 2)}, ${F(h / 2)}`, w / 2 + fs * 0.5, h / 2 - fs * 0.5, { bold: true });
-    if (inc.thirds) for (const [x, y] of [[w / 3, h / 3], [2 * w / 3, h / 3], [w / 3, 2 * h / 3], [2 * w / 3, 2 * h / 3]]) text(`${F(x)}, ${F(y)}`, x + fs * 0.4, y - fs * 0.4, { fs: fs * 0.8 });
+    text(`${X(w / 2)}, ${Y(h / 2)}${centered ? '  origin' : ''}`, w / 2 + fs * 0.5, h / 2 - fs * 0.5, { bold: true });
+    if (inc.thirds) for (const [x, y] of [[w / 3, h / 3], [2 * w / 3, h / 3], [w / 3, 2 * h / 3], [2 * w / 3, 2 * h / 3]]) text(`${X(x)}, ${Y(y)}`, x + fs * 0.4, y - fs * 0.4, { fs: fs * 0.8 });
     if (segs.length > 1 && (inc.segCenters || inc.segDividers)) {
       for (const g of segs) {
-        if (inc.segCenters) text(`${F(g.cx)}`, g.cx, h - fs * 1.9, { align: 'center', color: C.seg, fs: fs * 0.85 });
-        if (inc.segDividers && g.i > 0) text(`${F(g.x0)}`, g.x0, fs * 4.6, { align: 'center', color: C.seg, fs: fs * 0.75 });
+        if (inc.segCenters) text(`${X(g.cx)}`, g.cx, h - fs * 1.9, { align: 'center', color: C.seg, fs: fs * 0.85 });
+        if (inc.segDividers && g.i > 0) text(`${X(g.x0)}`, g.x0, ly + fs * 0.6, { align: 'center', color: C.seg, fs: fs * 0.75 });
       }
     }
-    if (inc.labels !== false) text(`0,0`, fs * 0.4, h - fs * 0.5, { fs: fs * 0.75 });
-    text(`${w},${h}`, w - fs * 0.4, h - fs * 0.5, { fs: fs * 0.75, align: 'right' });
   }
 
   // Interactive overlays (preview only)
@@ -151,6 +181,10 @@ export function drawOverview(ctx, job, o) {
     ctx.fillStyle = '#ffb020'; ctx.fillText(`@ ${s.x}, ${s.y}`, 6 * u, 44 * u);
     ctx.restore();
   }
+  // Global canvas origin is always the canvas top-left (0,0), Y down
+  ctx.save(); ctx.strokeStyle = '#ffffff'; ctx.fillStyle = '#ffffff'; ctx.lineWidth = u * 1.5;
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(28 * u, 0); ctx.moveTo(0, 0); ctx.lineTo(0, 28 * u); ctx.stroke();
+  ctx.font = `700 ${11 * u}px ${MONO}`; ctx.fillText('0,0 global  x→ y↓', 4 * u, -6 * u); ctx.restore();
   if (o.snapLines) {
     ctx.strokeStyle = '#fff'; ctx.lineWidth = u * 1.5; ctx.setLineDash([u * 4, u * 3]);
     for (const sl of o.snapLines) { ctx.beginPath(); if (sl.axis === 'x') { ctx.moveTo(sl.v, o.b.y0); ctx.lineTo(sl.v, o.b.y1); } else { ctx.moveTo(o.b.x0, sl.v); ctx.lineTo(o.b.x1, sl.v); } ctx.stroke(); }
@@ -170,10 +204,10 @@ export function exportFontSize(s, ex) {
 }
 
 /** Render a screen at native resolution and return a PNG Blob. */
-export function screenToBlob(s, ex) {
+export function screenToBlob(s, ex, originMode = 'tl') {
   const c = document.createElement('canvas'); c.width = s.w; c.height = s.h;
   const ctx = c.getContext('2d');
   drawScreen(ctx, s, { u: 1, lw: ex.lw, inc: ex.inc, colors: { bg: ex.bg, line: ex.line, seg: ex.seg, box: ex.box, text: ex.text },
-    boxOwnColors: ex.boxOwnColors, fs: exportFontSize(s, ex), crisp: true });
+    boxOwnColors: ex.boxOwnColors, fs: exportFontSize(s, ex), crisp: true, origin: G.originOf(s, originMode) });
   return new Promise((res, rej) => c.toBlob(b => { c.width = c.height = 0; b ? res(b) : rej(new Error('PNG encode failed (canvas too large for this device?)')); }, 'image/png'));
 }
