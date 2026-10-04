@@ -2,7 +2,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 const URL = process.env.PM_URL || 'http://127.0.0.1:8765/';
-const OUT = '/workspace/showcrew-pixelmap/screenshots/';
+const OUT = process.env.PM_OUT || new URL('../screenshots/', import.meta.url).pathname;
 const results = []; const ok = (c, m) => { results.push((c ? 'PASS ' : 'FAIL ') + m); };
 const browser = await chromium.launch();
 

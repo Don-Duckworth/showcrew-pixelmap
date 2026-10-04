@@ -2,6 +2,15 @@
 const KEY = 'showcrew.pixelmap.v1';
 
 export const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+/** Job ids are UUIDs (they double as the Supabase row id). */
+export const isUuid = v => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+export function newJobId() {
+  if (globalThis.crypto && crypto.randomUUID) return crypto.randomUUID();
+  const b = new Uint8Array(16); (globalThis.crypto || { getRandomValues: a => a.map(() => Math.random() * 256 | 0) }).getRandomValues(b);
+  b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
 export const BOX_COLORS = ['#ff3df2', '#00e5ff', '#ffb020', '#14f1c6', '#8b7bff', '#ff5a5a', '#b6ff3d', '#ffffff'];
 
 export function defaultExport() {
@@ -27,7 +36,7 @@ export function autoPlace(job, align = 'top') {
 }
 export function exampleJob() {
   const j = {
-    id: uid('job'), name: 'Example 4-Screen', mode: 'screen', origin: 'tl', created: Date.now(), updated: Date.now(),
+    id: newJobId(), seed: true, name: 'Example 4-Screen', mode: 'screen', origin: 'tl', created: Date.now(), updated: Date.now(),
     screens: [
       makeScreen('House Left', 3584, 1024), makeScreen('Center', 2560, 1280),
       makeScreen('House Right', 3584, 1024), makeScreen('Columns', 1536, 1280, 6),
@@ -38,7 +47,7 @@ export function exampleJob() {
 }
 export function emptyJob(name) {
   const s = makeScreen('Screen 1', 1920, 1080);
-  return { id: uid('job'), name, mode: 'screen', origin: 'tl', created: Date.now(), updated: Date.now(), screens: [s], currentScreenId: s.id, view: defaultView(), exportSettings: defaultExport() };
+  return { id: newJobId(), name, mode: 'screen', origin: 'tl', created: Date.now(), updated: Date.now(), screens: [s], currentScreenId: s.id, view: defaultView(), exportSettings: defaultExport() };
 }
 const num = (v, d, min = -1e7, max = 1e7) => { v = +v; return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : d; };
 const str = (v, d) => (typeof v === 'string' && v.trim() ? v.slice(0, 120) : d);
@@ -52,8 +61,8 @@ export function sanitizeJob(j, freshIds = false) {
   for (const k of ['bg', 'line', 'seg', 'box', 'text']) ex[k] = col(ex[k], de[k]);
   ex.lw = num(ex.lw, 2, 1, 64); ex.textSize = num(ex.textSize, 0, 0, 400);
   const out = {
-    id: freshIds || !j.id ? uid('job') : String(j.id), name: str(j.name, 'Untitled job'),
-    mode: j.mode === 'global' ? 'global' : 'screen', origin: j.origin === 'center' ? 'center' : 'tl', created: num(j.created, Date.now()), updated: Date.now(),
+    id: freshIds || !isUuid(j.id) ? newJobId() : j.id, name: str(j.name, 'Untitled job'), ...(j.seed && !freshIds ? { seed: true } : {}),
+    mode: j.mode === 'global' ? 'global' : 'screen', origin: j.origin === 'center' ? 'center' : 'tl', created: num(j.created, Date.now()), updated: freshIds ? Date.now() : num(j.updated, Date.now()),
     view: Object.assign(defaultView(), j.view || {}), exportSettings: ex,
     screens: j.screens.slice(0, 200).map((s, i) => ({
       id: freshIds || !s.id ? uid('scr') : String(s.id), name: str(s.name, `Screen ${i + 1}`),
@@ -79,13 +88,15 @@ export function load() {
   try {
     const raw = localStorage.getItem(KEY); if (!raw) return null;
     const S = JSON.parse(raw); if (!Array.isArray(S.jobs) || !S.jobs.length) return null;
-    S.jobs = S.jobs.map(j => { try { return sanitizeJob(j); } catch { return null; } }).filter(Boolean);
+    S.jobs = S.jobs.map(j => { try { const n = sanitizeJob(j); if (j.id === S.currentJobId) S.currentJobId = n.id; return n; } catch { return null; } }).filter(Boolean);
+    S.tombstones = S.tombstones && typeof S.tombstones === 'object' ? S.tombstones : {};
+    S.sync = S.sync && typeof S.sync === 'object' ? S.sync : {};
     if (!S.jobs.length) return null;
     if (!S.jobs.some(j => j.id === S.currentJobId)) S.currentJobId = S.jobs[0].id;
     return S;
   } catch (e) { console.warn('load failed', e); return null; }
 }
-export function seed() { const j = exampleJob(); return { v: 1, jobs: [j], currentJobId: j.id }; }
+export function seed() { const j = exampleJob(); return { v: 1, jobs: [j], currentJobId: j.id, tombstones: {}, sync: {} }; }
 export function save(S) {
   try { localStorage.setItem(KEY, JSON.stringify(S)); return true; } catch (e) { console.warn('save failed', e); return false; }
 }

@@ -1,8 +1,9 @@
 // ShowCrew PixelMap service worker — offline app shell.
-const VERSION = 'scpm-v1.1.0';
+const VERSION = 'scpm-v1.2.0';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
-  './js/app.js', './js/geometry.js', './js/render.js', './js/store.js',
+  './js/app.js', './js/geometry.js', './js/render.js', './js/store.js', './js/config.js', './js/sync.js',
+  './vendor/supabase-js-2.117.2.umd.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png', './icons/favicon-32.png',
 ];
 self.addEventListener('install', e => {

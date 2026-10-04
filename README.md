@@ -15,3 +15,13 @@ Plain HTML/CSS/JS, no build step. Deploy the static files (index.html, manifest.
   PiP boxes always use whole pixels.
 - Tests: `node tools/test-geometry.mjs` (math); `node tools/browser-test.mjs` (headless iPad/iPhone checks, needs playwright + a local server). Icons: `node tools/make-icons.mjs` (needs playwright).
 - Updating: bump `VERSION` in sw.js when you change files so installed copies refresh.
+
+## Cloud sync (Supabase, optional)
+- Configure in `js/config.js` (`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`). Empty key → sync UI hidden, nothing loaded, app is 100% local.
+- Offline-first: localStorage is the source of truth. When signed in + online the app pulls/pushes on open, on
+  visibility/online events, every 2 min while visible and ~3 s after edits. Last write wins per job (`updated`),
+  deletes are tombstones (`deleted = true`). First sign-in uploads local jobs (an untouched sample job is not duplicated).
+- Sign-in: email one-time code (works inside the installed iOS app); magic links also work in Safari.
+- supabase-js is vendored in `vendor/` (no CDN) and precached by the service worker.
+- Backend SQL + setup steps: `supabase/`. Tests: `tools/sync-test.mjs` (two devices vs. an in-memory backend that
+  mirrors `push_jobs`), `tools/config-check.mjs` (empty-key behaviour + live Supabase Auth reachability).

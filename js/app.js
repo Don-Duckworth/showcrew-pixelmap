@@ -2,6 +2,7 @@
 import * as G from './geometry.js';
 import * as Store from './store.js';
 import { drawScreen, drawOverview, canvasBounds, handlePoints, screenToBlob } from './render.js';
+import { createSync, syncConfigured } from './sync.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -22,7 +23,7 @@ const offX = s => (isCtr() ? s.w / 2 : 0), offY = s => (isCtr() ? s.h / 2 : 0);
 const OX = (s, x) => (x == null ? null : x - offX(s)), OY = (s, y) => (y == null ? null : y - offY(s));
 const n1 = v => String(Math.round(v * 10) / 10);
 let saveT = 0;
-function persist() { job().updated = Date.now(); clearTimeout(saveT); saveT = setTimeout(() => Store.save(S), 150); }
+function persist() { const j = job(); j.updated = Date.now(); delete j.seed; clearTimeout(saveT); saveT = setTimeout(() => Store.save(S), 150); sync.schedule(); }
 function commit(parts = 'all') { persist(); render(parts); }
 
 // ---------- formatting ----------
@@ -484,7 +485,61 @@ async function doExport(screens) {
   toast(`${ui.exportFiles.length} PNG ready — tap Share or a file`);
 }
 
+// ---------- cloud sync (only when js/config.js has a publishable key) ----------
+const sync = createSync({
+  getS: () => S,
+  save: () => { clearTimeout(saveT); Store.save(S); },
+  onChange: () => { ui.sel = null; ui.exportFiles = []; render(); if (!$('#modal').hidden && $('#modal .acct')) openAccount(); },
+  onStatus: st => { renderSync(st); if (!$('#modal').hidden && $('#modal .acct')) openAccount(); },
+});
+const SYNC_LABEL = { signedout: 'Sign in', syncing: 'Syncing', synced: 'Synced', offline: 'Offline', error: 'Sync error' };
+function renderSync(st = sync.status()) {
+  const b = $('#syncBtn'); if (!b) return;
+  b.hidden = !syncConfigured; b.dataset.state = st.state;
+  b.querySelector('.sl').textContent = SYNC_LABEL[st.state] || st.state;
+  b.querySelector('.st').textContent = st.state === 'synced' && st.lastSync ? new Date(st.lastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : st.state === 'signedout' ? 'cloud' : '';
+  b.title = `Cloud sync: ${SYNC_LABEL[st.state] || st.state}${st.detail ? ' — ' + st.detail : ''}`;
+}
+function openAccount() {
+  const st = sync.status(), signedIn = !!st.email;
+  const m = modal(`<div class="acct"><div class="row between"><div class="lbl">CLOUD SYNC · ACCOUNT</div><button class="btn sm ghost" data-act="closeModal">✕</button></div>
+    <div class="sync-state" data-state="${st.state}"><span class="dot"></span><b>${esc(SYNC_LABEL[st.state] || st.state)}</b>${st.lastSync ? `<small>last sync ${new Date(st.lastSync).toLocaleString()}</small>` : ''}${st.detail && st.state === 'error' ? `<small class="err">${esc(st.detail)}</small>` : ''}</div>
+    ${signedIn ? `<p class="hint">Signed in as <b>${esc(st.email)}</b>. Jobs sync automatically when online; this device keeps working offline.</p>
+      <div class="row wrap"><button class="btn primary grow" data-act="syncNow">⟳ Sync now</button><button class="btn danger grow" data-act="signOut">Sign out</button></div>
+      <p class="hint">Signing out keeps the jobs on this device. Sharing jobs with crew: coming soon.</p>`
+    : `<p class="hint">Sign in with your email to back up jobs and sync them between iPad, iPhone and computer. No password: we email you a code.</p>
+      <label class="fld"><span>Email</span><input class="inp" id="acctEmail" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" placeholder="you@example.com" value="${esc(st.pendingEmail || '')}"></label>
+      <button class="btn ${st.pendingEmail ? '' : 'primary'} full" data-act="sendCode">${st.pendingEmail ? 'Resend code' : 'Email me a sign-in code'}</button>
+      ${st.pendingEmail ? `<label class="fld"><span>Code from the email</span><input class="inp code" id="acctCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="10" placeholder="123456"></label>
+      <button class="btn primary full" data-act="verifyCode">Verify &amp; sign in</button>
+      <p class="hint">Enter the code here — on an installed iPad/iPhone app the email's link opens Safari instead of the app.</p>` : ''}
+      <p class="hint">Not signed in? Everything still works and stays on this device.</p>`}
+    <div class="acct-msg hint" id="acctMsg"></div></div>`);
+  const code = $('#acctCode', m), email = $('#acctEmail', m);
+  if (code) { code.focus(); code.onkeydown = e => { if (e.key === 'Enter') ACTIONS.verifyCode(); }; }
+  else if (email && !email.value) setTimeout(() => email.focus(), 30);
+  if (email) email.onkeydown = e => { if (e.key === 'Enter') ACTIONS.sendCode(); };
+}
+const acctMsg = (t, err) => { const el = $('#acctMsg'); if (el) { el.textContent = t; el.classList.toggle('err', !!err); } };
+
 const ACTIONS = {
+  openAccount: () => openAccount(),
+  sendCode: async () => {
+    const email = ($('#acctEmail')?.value || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return acctMsg('Enter a valid email address.', true);
+    acctMsg('Sending…');
+    try { await sync.sendCode(email); openAccount(); acctMsg(`Code sent to ${email}. Check your inbox (and spam).`); }
+    catch (e) { acctMsg(e.message || 'Could not send the code.', true); }
+  },
+  verifyCode: async () => {
+    const code = ($('#acctCode')?.value || '').replace(/\D/g, '');
+    if (code.length < 6) return acctMsg('Enter the code from the email.', true);
+    acctMsg('Verifying…');
+    try { await sync.verifyCode(code); openAccount(); toast('Signed in — syncing'); }
+    catch (e) { acctMsg(e.message || 'Invalid or expired code.', true); }
+  },
+  syncNow: () => sync.syncNow('manual'),
+  signOut: async () => { try { await sync.signOut(); } catch (e) { toast(e.message); } openAccount(); },
   tab: el => { ui.tab = el.dataset.tab; render(['panel']); },
   pickScreen: el => { job().currentScreenId = el.dataset.id; ui.sel = null; ui.probe = null; if (ui.view === 'canvas') ui.view = 'screen'; commit(['screens', 'panel', 'chips']); },
   addScreen: () => { const j = job(), s = Store.makeScreen(`Screen ${j.screens.length + 1}`, 1920, 1080); const last = j.screens[j.screens.length - 1]; if (last) s.x = last.x + last.w; j.screens.push(s); j.currentScreenId = s.id; ui.tab = 'screen'; ui.sel = null; commit(); },
@@ -521,6 +576,7 @@ const ACTIONS = {
   dupJob: () => { const c = Store.duplicateJob(job()); S.jobs.push(c); S.currentJobId = c.id; ui.sel = null; commit(); openJobs(); toast('Job duplicated'); },
   delJob: async () => {
     const j = job(); if (!(await confirmBox(`Delete job “${j.name}” and all its screens?`))) return openJobs();
+    (S.tombstones = S.tombstones || {})[j.id] = Date.now();
     S.jobs = S.jobs.filter(x => x !== j); if (!S.jobs.length) S.jobs.push(Store.exampleJob()); S.currentJobId = S.jobs[0].id; ui.sel = null; commit(); openJobs();
   },
   newJob: async () => { const n = await ask('New job name', `Job ${new Date().toLocaleDateString()}`, 'Create'); if (n) { const j = Store.emptyJob(n); S.jobs.push(j); S.currentJobId = j.id; ui.sel = null; ui.tab = 'screen'; commit(); } else openJobs(); },
@@ -580,9 +636,10 @@ document.addEventListener('change', e => {
 document.addEventListener('input', e => { const el = e.target; if (el.dataset.bind === 'box.color' && box()) { box().color = el.value; drawStage(); } });
 
 new ResizeObserver(() => drawStage()).observe(wrap);
+if (syncConfigured) { renderSync(); sync.init(); }
 window.addEventListener('orientationchange', () => setTimeout(drawStage, 300));
 render();
-window.__pm = { get S() { return S; }, ui, G, render, job, scr, ACTIONS, screenToBlob };
+window.__pm = { get S() { return S; }, ui, G, render, job, scr, ACTIONS, screenToBlob, sync };
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW registration failed', e));
