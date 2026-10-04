@@ -1,0 +1,18 @@
+import * as G from '../js/geometry.js';
+import assert from 'node:assert/strict';
+const near = (a, b) => assert.ok(Math.abs(a - b) < 0.01, `${a} != ${b}`);
+const C = { w: 2560, h: 1280 }, HL = { w: 3584, h: 1024 }, COL = { w: 1536, h: 1280, segments: 6 };
+const p = (s, g, l) => G.keyRows(s).find(r => r.group.startsWith(g) && r.label === l);
+near(p(C, 'Center', 'Center point').x, 1280); near(p(C, 'Center', 'Center point').y, 640);
+near(p(HL, 'Thirds', 'Vertical ⅓').x, 1194.67); near(p(HL, 'Thirds', 'Vertical ⅔').x, 2389.33);
+assert.equal(G.fmt1(3584 / 3), '1194.7'); assert.equal(G.rnd(3584 / 3), 1195); assert.equal(G.fmt1(2 * 3584 / 3), '2389.3'); assert.equal(G.rnd(2 * 3584 / 3), 2389);
+assert.deepEqual(G.segments(COL).map(s => s.cx), [128, 384, 640, 896, 1152, 1408]);
+assert.deepEqual(G.segments(COL).slice(1).map(s => s.x0), [256, 512, 768, 1024, 1280]);
+near(p(COL, 'Segment 2', 'Center').x, 384); near(p(COL, 'Segment 2', 'Center').y, 640);
+assert.equal(G.aspect(3584, 1024).text, '7:2'); assert.equal(G.aspect(3584, 1024).decText, '3.50:1');
+assert.equal(G.aspect(2560, 1280).text, '2:1'); assert.equal(G.aspect(1536, 1280).text, '6:5');
+assert.deepEqual(G.largestFit(3584, 1024, 16, 9), { w: 1820, h: 1024, x: 882, y: 0 });
+assert.deepEqual(G.largestFit(2560, 1280, 16, 9), { w: 2275, h: 1280, x: 142.5, y: 0 });
+assert.deepEqual(G.largestFit(256, 1280, 16, 9), { w: 256, h: 144, x: 0, y: 568 });
+assert.deepEqual(G.parseRatio('2.39:1'), [2.39, 1]);
+console.log('geometry tests passed');
