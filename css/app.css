@@ -60,6 +60,16 @@ button { font: inherit; color: inherit; }
 .sync-state b { color: var(--c); font: 700 13px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
 .sync-state small { grid-column: 2; font: 11.5px var(--mono); color: var(--dim); } .sync-state small.err, .acct-msg.err { color: #ffb3bb; }
 .inp.code { font-size: 26px; letter-spacing: .4em; text-align: center; }
+/* sign-in (password + authenticator code) */
+.acct-form { gap: 10px; } .acct .col { gap: 10px; }
+.lbl.auth-title { color: var(--cyan); }
+.auth-foot { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.linkish { background: none; border: 0; color: var(--cyan); text-decoration: underline; cursor: pointer; padding: 0; min-height: var(--tap); display: inline-flex; align-items: center; font: inherit; font-size: 14px; text-align: left; }
+.qr { align-self: center; background: #fff; padding: 10px; border-radius: 12px; box-shadow: 0 0 24px rgba(0, 229, 255, .35); }
+.qr img { width: 200px; height: 200px; display: block; }
+.inp.mono-sm { font: 13px var(--mono); letter-spacing: .08em; }
+.acct-msg:empty { display: none; } #enrollWait.err { color: #ffb3bb; }
+[data-state=mfa] { --c: var(--mag); }
 
 /* ---------- segmented controls / buttons ---------- */
 .seg { display: inline-flex; background: rgba(0, 0, 0, .35); border: 1px solid var(--edge); border-radius: var(--r); padding: 3px; gap: 3px; flex-shrink: 0; }

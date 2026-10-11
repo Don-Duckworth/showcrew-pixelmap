@@ -1,6 +1,9 @@
 // ShowCrew PixelMap — offline-first Supabase sync.
 // localStorage stays the source of truth. When online + signed in, jobs are pulled and pushed:
 // last-write-wins per job on `updated` (ms) ⇄ `updated_at`, soft-delete tombstones, uploads local jobs on first sign-in.
+// Sign-in (v1.3, same as ShowCrew GearVault): email + password, then a TOTP authenticator code (Supabase MFA).
+// First sign-in enrolls the authenticator (QR + secret); every sign-in after that is challenged. Sync only runs at aal2,
+// and the database RLS also requires aal2, so a password-only session can't read or write any job.
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './config.js';
 import * as Store from './store.js';
 
@@ -20,10 +23,13 @@ const iso = ms => new Date(ms).toISOString();
 /**
  * createSync({ getS, save, onChange, onStatus })
  *  getS(): app state {jobs, currentJobId, tombstones, sync}
- *  save(): persist state now; onChange(): re-render after remote changes; onStatus(state): header indicator.
+ *  save(): persist state now; onChange(): re-render after remote changes; onStatus(state): header indicator;
+ *  onRecovery(): a password-reset link was opened (show the account panel).
  */
-export function createSync({ getS, save, onChange, onStatus }) {
-  const st = { state: 'signedout', detail: '', user: null, client: null, ready: null, timer: 0, running: false, again: false, lastSync: 0, pendingEmail: '' };
+export function createSync({ getS, save, onChange, onStatus, onRecovery }) {
+  // step: 'signin' (no session) · 'enroll' (aal1, no verified authenticator) · 'challenge' (aal1, has one) · 'newpw' (aal2 after a reset link) · 'done' (aal2)
+  const st = { state: 'signedout', detail: '', user: null, client: null, timer: 0, running: false, again: false, lastSync: 0,
+    step: 'signin', aal: null, recovery: false, factors: [], enroll: null };
   const set = (state, detail = '') => { st.state = state; st.detail = detail; onStatus && onStatus(api.status()); };
 
   async function client() {
@@ -36,19 +42,50 @@ export function createSync({ getS, save, onChange, onStatus }) {
     return st.client;
   }
 
+  /** Re-read session + assurance level and work out the next sign-in step. */
+  async function refreshAuth() {
+    const c = await client();
+    const { data } = await c.auth.getSession();
+    const session = data && data.session;
+    st.user = session ? session.user : null;
+    if (!st.user) { st.aal = null; st.factors = []; st.enroll = null; st.step = 'signin'; return st.step; }
+    const { data: aal, error } = await c.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) throw error;
+    st.aal = aal.currentLevel;
+    if (aal.currentLevel === 'aal2') { st.enroll = null; st.step = st.recovery ? 'newpw' : 'done'; }
+    else if (aal.nextLevel === 'aal2') {
+      st.step = 'challenge';
+      const { data: list } = await c.auth.mfa.listFactors();
+      st.factors = ((list && list.totp) || []).filter(f => f.status === 'verified').map(f => ({ id: f.id, name: f.friendly_name || 'Authenticator' }));
+    } else st.step = 'enroll';
+    return st.step;
+  }
+  /** Status after an auth change: sync when fully signed in, otherwise show what's needed. */
+  async function afterAuth(reason) {
+    const step = await refreshAuth();
+    if (step === 'done') return syncNow(reason);
+    set(step === 'signin' ? (navigator.onLine ? 'signedout' : 'offline') : 'mfa');
+  }
+
   async function init() {
     if (!syncConfigured) return;
     try {
       const c = await client();
-      const { data } = await c.auth.getSession();
-      st.user = data && data.session ? data.session.user : null;
       c.auth.onAuthStateChange((ev, session) => {
-        const was = st.user && st.user.id;
-        st.user = session ? session.user : null;
-        if (!st.user) { set(navigator.onLine ? 'signedout' : 'offline'); return; }
-        if (ev === 'SIGNED_IN' && was !== st.user.id) schedule(0);
+        if (ev === 'PASSWORD_RECOVERY') { st.recovery = true; onRecovery && setTimeout(onRecovery, 0); }
+        if (ev === 'INITIAL_SESSION') return;
+        if (!session) { st.user = null; st.aal = null; st.step = 'signin'; st.enroll = null; set(navigator.onLine ? 'signedout' : 'offline'); return; }
+        // Don't call back into supabase-js from inside this callback (it can deadlock) — defer.
+        const was = st.user && st.user.id, wasAal = st.aal;
+        setTimeout(async () => {
+          try {
+            const step = await refreshAuth();
+            if (step === 'done') { if (was !== st.user.id || wasAal !== 'aal2') schedule(0); else onStatus && onStatus(api.status()); }
+            else set('mfa');
+          } catch (e) { console.warn('auth refresh failed', e); }
+        }, 0);
       });
-      if (st.user) await syncNow('open'); else set(navigator.onLine ? 'signedout' : 'offline');
+      await afterAuth('open');
     } catch (e) {
       // Library failed to load (offline first run) — app keeps working locally.
       set(navigator.onLine ? 'error' : 'offline', e.message);
@@ -68,7 +105,8 @@ export function createSync({ getS, save, onChange, onStatus }) {
     if (!syncConfigured) return;
     if (st.running) { st.again = true; return; }
     if (!st.client) { try { await client(); } catch (e) { return set('offline', e.message); } }
-    if (!st.user) return set('signedout');
+    if (!st.user) return set(navigator.onLine ? 'signedout' : 'offline');
+    if (st.aal !== 'aal2' || st.step !== 'done') return set(navigator.onLine ? 'mfa' : 'offline');   // password-only session: no data access
     if (!navigator.onLine) return set('offline');
     st.running = true; set('syncing');
     try {
@@ -138,23 +176,75 @@ export function createSync({ getS, save, onChange, onStatus }) {
     }
   }
 
+  const redirectTo = () => location.origin + location.pathname;
+  const need = (step) => { if (st.step !== step) throw new Error('Sign-in step changed — please try again.'); };
   const api = {
-    configured: syncConfigured, init, schedule, syncNow,
-    status: () => ({ state: st.state, detail: st.detail, email: st.user ? st.user.email : '', lastSync: st.lastSync || (getS().sync || {}).lastSync || 0, pendingEmail: st.pendingEmail }),
-    async sendCode(email) {
-      const c = await client(); st.pendingEmail = email.trim().toLowerCase();
-      const { error } = await c.auth.signInWithOtp({ email: st.pendingEmail, options: { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname } });
+    configured: syncConfigured, init, schedule, syncNow, refreshAuth,
+    status: () => ({ state: st.state, detail: st.detail, email: st.user ? st.user.email : '', signedIn: st.step === 'done',
+      step: st.step, aal: st.aal, recovery: st.recovery, factors: st.factors, enroll: st.enroll,
+      lastSync: st.lastSync || (getS().sync || {}).lastSync || 0 }),
+    /** Email + password. Resolves with the next step ('enroll' | 'challenge' | 'done'). */
+    async signIn(email, password) {
+      const c = await client();
+      const { error } = await c.auth.signInWithPassword({ email: String(email).trim(), password });
+      if (error) throw error;
+      await afterAuth('signin'); return st.step;
+    },
+    /** Optional self sign-up (only when ALLOW_SIGNUP). Resolves true when a confirmation email was sent. */
+    async signUp(email, password) {
+      const c = await client();
+      const { data, error } = await c.auth.signUp({ email: String(email).trim(), password, options: { emailRedirectTo: redirectTo() } });
+      if (error) throw error;
+      if (data.session) { await afterAuth('signup'); return false; }
+      return true;
+    },
+    /** First sign-in: create a TOTP factor. Drops half-finished ones so a fresh QR code is issued. */
+    async startEnroll() {
+      const c = await client(); need('enroll');
+      const { data: list } = await c.auth.mfa.listFactors();
+      for (const f of ((list && list.all) || []).filter(x => x.factor_type === 'totp' && x.status !== 'verified')) await c.auth.mfa.unenroll({ factorId: f.id });
+      const { data, error } = await c.auth.mfa.enroll({ factorType: 'totp', friendlyName: `PixelMap ${new Date().toISOString().slice(0, 16)}`, issuer: 'ShowCrew PixelMap' });
+      if (error) throw error;
+      st.enroll = { id: data.id, qr: data.totp.qr_code, secret: data.totp.secret };
+      onStatus && onStatus(api.status());
+      return st.enroll;
+    },
+    async verifyEnroll(code) {
+      const c = await client();
+      if (!st.enroll) throw new Error('Start the authenticator setup first.');
+      const { error } = await c.auth.mfa.challengeAndVerify({ factorId: st.enroll.id, code: String(code).replace(/\s+/g, '') });
+      if (error) throw error;
+      st.enroll = null; await afterAuth('enrolled'); return st.step;
+    },
+    /** Every sign-in after enrollment: challenge + verify the 6-digit code → aal2. */
+    async verifyCode(code, factorId) {
+      const c = await client(); need('challenge');
+      const id = factorId || (st.factors[0] && st.factors[0].id);
+      if (!id) throw new Error('No verified authenticator on this account.');
+      const { data: ch, error: e1 } = await c.auth.mfa.challenge({ factorId: id });
+      if (e1) throw e1;
+      const { error: e2 } = await c.auth.mfa.verify({ factorId: id, challengeId: ch.id, code: String(code).replace(/\s+/g, '') });
+      if (e2) throw e2;
+      await afterAuth('verified'); return st.step;
+    },
+    async resetPassword(email) {
+      const c = await client();
+      const { error } = await c.auth.resetPasswordForEmail(String(email).trim(), { redirectTo: redirectTo() });
       if (error) throw error;
     },
-    async verifyCode(token, email = st.pendingEmail) {
+    /** After a reset link + authenticator code (aal2): set the new password. */
+    async updatePassword(pw) {
       const c = await client();
-      const { data, error } = await c.auth.verifyOtp({ email, token: String(token).replace(/\s+/g, ''), type: 'email' });
+      const { error } = await c.auth.updateUser({ password: pw });
       if (error) throw error;
-      st.user = data.user || (data.session && data.session.user); st.pendingEmail = '';
-      await syncNow('signin');
+      st.recovery = false;
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
+      await afterAuth('password'); return st.step;
     },
     async signOut() {
-      const c = await client(); await c.auth.signOut(); st.user = null; set('signedout');
+      const c = await client(); await c.auth.signOut();
+      st.user = null; st.aal = null; st.step = 'signin'; st.enroll = null; st.factors = []; st.recovery = false;
+      set(navigator.onLine ? 'signedout' : 'offline');
     },
   };
   return api;

@@ -1,5 +1,5 @@
 // ShowCrew PixelMap service worker — offline app shell.
-const VERSION = 'scpm-v1.2.0';
+const VERSION = 'scpm-v1.3.0';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/geometry.js', './js/render.js', './js/store.js', './js/config.js', './js/sync.js',

@@ -10,7 +10,11 @@ insert into auth.users (id, email) values
   ('00000000-0000-4000-a000-00000000000c', 'carol@test.local');
 
 create or replace function pg_temp.as_user(p uuid, p_email text) returns void language sql as $$
-  select set_config('request.jwt.claims', json_build_object('sub', p, 'email', p_email, 'role', 'authenticated')::text, true);
+  select set_config('request.jwt.claims', json_build_object('sub', p, 'email', p_email, 'role', 'authenticated', 'aal', 'aal2')::text, true);
+$$;
+-- Password-only session (signed in, authenticator code not entered yet).
+create or replace function pg_temp.as_user_aal1(p uuid, p_email text) returns void language sql as $$
+  select set_config('request.jwt.claims', json_build_object('sub', p, 'email', p_email, 'role', 'authenticated', 'aal', 'aal1')::text, true);
 $$;
 create or replace function pg_temp.check(ok boolean, msg text) returns void language sql as $$
   insert into _r (ok, msg) values (coalesce(ok, false), msg);
@@ -87,6 +91,27 @@ do $$ begin
 exception when insufficient_privilege then perform pg_temp.check(true, 'editor Carol cannot add shares');
 end $$;
 select pg_temp.check((select owner from public.jobs where id = '11111111-1111-4111-8111-111111111111') = '00000000-0000-4000-a000-00000000000a', 'owner unchanged after editor writes');
+
+-- MFA gate: Alice at aal1 (password only) sees and writes nothing
+select pg_temp.as_user_aal1('00000000-0000-4000-a000-00000000000a', 'alice@test.local');
+select pg_temp.check((select count(*) from public.jobs) = 0, 'aal1: owner sees none of her jobs');
+select pg_temp.check((select count(*) from public.job_shares) = 0, 'aal1: owner sees none of her shares');
+with u as (update public.jobs set name = 'aal1 edit' where id = '11111111-1111-4111-8111-111111111111' returning 1)
+select pg_temp.check((select count(*) from u) = 0, 'aal1: owner cannot update');
+with d as (delete from public.jobs where id = '11111111-1111-4111-8111-111111111111' returning 1)
+select pg_temp.check((select count(*) from d) = 0, 'aal1: owner cannot delete');
+do $$ begin
+  insert into public.jobs (name) values ('aal1 insert');
+  perform pg_temp.check(false, 'aal1: insert blocked');
+exception when insufficient_privilege then perform pg_temp.check(true, 'aal1: insert blocked');
+end $$;
+do $$ begin
+  perform public.push_jobs('[{"id":"44444444-4444-4444-8444-444444444444","name":"x","data":{}}]'::jsonb);
+  perform pg_temp.check(false, 'aal1: push_jobs refused');
+exception when insufficient_privilege then perform pg_temp.check(true, 'aal1: push_jobs refused');
+end $$;
+select pg_temp.as_user('00000000-0000-4000-a000-00000000000a', 'alice@test.local');
+select pg_temp.check((select count(*) from public.jobs where id = '11111111-1111-4111-8111-111111111111' and name = 'Carol push') = 1, 'aal2 again: job visible and unchanged by aal1 attempts');
 
 -- Anonymous (no JWT, anon role): nothing
 reset role; set local role anon;

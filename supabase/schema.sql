@@ -4,6 +4,7 @@
 -- Model: one row per job. `data` holds the full job object exactly as the app stores it in localStorage.
 -- Sync is last-write-wins per job on `updated_at` (client edit time, clamped to now()+5 min).
 -- Deletes are soft (`deleted = true` tombstones) so other devices learn about them.
+-- Every table also requires an MFA-verified session (JWT aal = 'aal2'); see supabase/migrations/0002_require_mfa_aal2.sql.
 -- `job_shares` makes the schema ready for crew sharing (viewer / editor); the app UI for sharing is a TODO.
 
 create schema if not exists private;  -- helpers here are NOT exposed through the Data API
@@ -125,6 +126,15 @@ create policy shares_update on public.job_shares for update to authenticated
 create policy shares_delete on public.job_shares for delete to authenticated
   using (private.is_job_owner(job_id));
 
+-- Require MFA (v1.3, same as GearVault): RESTRICTIVE → AND-ed with the policies above, so an aal1 (password-only)
+-- session sees nothing and can write nothing. Sign-in = email + password + authenticator code (JWT aal = 'aal2').
+drop policy if exists "require mfa (aal2)" on public.jobs;
+create policy "require mfa (aal2)" on public.jobs as restrictive for all to authenticated
+  using (((select auth.jwt()) ->> 'aal') = 'aal2') with check (((select auth.jwt()) ->> 'aal') = 'aal2');
+drop policy if exists "require mfa (aal2)" on public.job_shares;
+create policy "require mfa (aal2)" on public.job_shares as restrictive for all to authenticated
+  using (((select auth.jwt()) ->> 'aal') = 'aal2') with check (((select auth.jwt()) ->> 'aal') = 'aal2');
+
 -- ---------------------------------------------------------------- sync RPC
 -- push_jobs(items): batch upsert with last-write-wins. Each item: {id, name, data, updated_at, deleted}.
 -- Returns one row per item: status 'ok' (written), 'stale' (server copy is newer; client should pull) or 'denied: …'.
@@ -138,6 +148,9 @@ declare
 begin
   if auth.uid() is null then
     raise exception 'not authenticated' using errcode = '28000';
+  end if;
+  if coalesce(auth.jwt() ->> 'aal', '') <> 'aal2' then
+    raise exception 'two-factor authentication required (aal2)' using errcode = '42501';
   end if;
   if jsonb_typeof(items) <> 'array' then
     raise exception 'items must be a JSON array' using errcode = '22023';

@@ -3,6 +3,8 @@ import * as G from './geometry.js';
 import * as Store from './store.js';
 import { drawScreen, drawOverview, canvasBounds, handlePoints, screenToBlob } from './render.js';
 import { createSync, syncConfigured } from './sync.js';
+import * as CFG from './config.js';   // namespace import: an older config.js without ALLOW_SIGNUP still loads
+const ALLOW_SIGNUP = CFG.ALLOW_SIGNUP === true;
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -486,60 +488,163 @@ async function doExport(screens) {
 }
 
 // ---------- cloud sync (only when js/config.js has a publishable key) ----------
+// Sign-in = email + password, then a 6-digit authenticator (TOTP) code — same as ShowCrew GearVault.
+// No email links are needed to sign in (work-mail link scanners can't burn anything). Signed out, the app works 100% locally.
+const acctOpen = () => !$('#modal').hidden && !!$('#modal .acct');
 const sync = createSync({
   getS: () => S,
   save: () => { clearTimeout(saveT); Store.save(S); },
-  onChange: () => { ui.sel = null; ui.exportFiles = []; render(); if (!$('#modal').hidden && $('#modal .acct')) openAccount(); },
-  onStatus: st => { renderSync(st); if (!$('#modal').hidden && $('#modal .acct')) openAccount(); },
+  onChange: () => { ui.sel = null; ui.exportFiles = []; render(); if (acctOpen()) openAccount(); },
+  onStatus: st => { renderSync(st); if (acctOpen()) openAccount(); },
+  onRecovery: () => { ui.acctView = 'signin'; openAccount(); },
 });
-const SYNC_LABEL = { signedout: 'Sign in', syncing: 'Syncing', synced: 'Synced', offline: 'Offline', error: 'Sync error' };
+const SYNC_LABEL = { signedout: 'Sign in', syncing: 'Syncing', synced: 'Synced', offline: 'Offline', error: 'Sync error', mfa: '2FA code' };
 function renderSync(st = sync.status()) {
   const b = $('#syncBtn'); if (!b) return;
   b.hidden = !syncConfigured; b.dataset.state = st.state;
   b.querySelector('.sl').textContent = SYNC_LABEL[st.state] || st.state;
-  b.querySelector('.st').textContent = st.state === 'synced' && st.lastSync ? new Date(st.lastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : st.state === 'signedout' ? 'cloud' : '';
+  b.querySelector('.st').textContent = st.state === 'synced' && st.lastSync ? new Date(st.lastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : st.state === 'signedout' ? 'cloud' : st.state === 'mfa' ? 'needed' : '';
   b.title = `Cloud sync: ${SYNC_LABEL[st.state] || st.state}${st.detail ? ' — ' + st.detail : ''}`;
 }
+const codeField = (id = 'acctCode') => `<label class="fld"><span>6-digit code from your authenticator app</span><input class="inp code" id="${id}" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" placeholder="••••••"></label>`;
+const emailField = () => `<label class="fld"><span>Email</span><input class="inp" id="acctEmail" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@example.com" value="${esc(ui.acctEmail || '')}"></label>`;
+function acctBody(st) {
+  const who = st.email ? `<p class="hint">Signed in as <b>${esc(st.email)}</b>.</p>` : '';
+  const back = '<button type="button" class="linkish" data-act="acctView" data-v="signin">← Back to sign in</button>';
+  const out = '<button type="button" class="linkish" data-act="signOut">Sign out / use another account</button>';
+  switch (st.step) {
+    case 'done': return { key: 'done', html: `<p class="hint">Signed in as <b>${esc(st.email)}</b> · two-factor on. Jobs sync automatically when online; this device keeps working offline.</p>
+      <div class="row wrap"><button type="button" class="btn primary grow" data-act="syncNow">⟳ Sync now</button><button type="button" class="btn danger grow" data-act="signOut">Sign out</button></div>
+      <p class="hint">Signing out keeps the jobs on this device. Sharing jobs with crew: coming soon.</p>` };
+    case 'enroll': {
+      const e = st.enroll;
+      if (!e) return { key: 'enroll-wait', html: `<div class="lbl auth-title">SET UP TWO-FACTOR (REQUIRED)</div>${who}<p class="hint" id="enrollWait">Preparing your authenticator QR code…</p><div class="auth-foot">${out}</div>`, after: startEnroll };
+      return { key: 'enroll-' + e.id, form: 'verifyEnroll', html: `<div class="lbl auth-title">SET UP TWO-FACTOR (REQUIRED)</div>${who}
+        <p class="hint">Scan this with an authenticator app (1Password, Authy, Google Authenticator, iOS Passwords…), then enter the 6-digit code. Cloud sync starts once this is done.</p>
+        <div class="qr"><img id="totpQr" alt="Authenticator QR code" src="${esc(e.qr)}"></div>
+        <label class="fld"><span>Or enter this secret manually — save it somewhere safe</span><input class="inp mono-sm" id="totpSecret" readonly value="${esc(e.secret)}"></label>
+        ${codeField()}<button class="btn primary full" type="submit">Verify &amp; turn on 2FA</button><div class="auth-foot">${out}</div>` };
+    }
+    case 'challenge': return { key: 'challenge', form: 'verifyCode', html: `<div class="lbl auth-title">TWO-FACTOR CHECK</div>${who}
+        <p class="hint">Enter the current code from your authenticator app.</p>
+        ${st.factors.length > 1 ? `<label class="fld"><span>Authenticator</span><select class="inp" id="acctFactor">${st.factors.map(f => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('')}</select></label>` : ''}
+        ${codeField()}<button class="btn primary full" type="submit">Verify</button><div class="auth-foot">${out}</div>` };
+    case 'newpw': return { key: 'newpw', form: 'savePassword', html: `<div class="lbl auth-title">CHOOSE A NEW PASSWORD</div><p class="hint">For <b>${esc(st.email)}</b>.</p>
+        <label class="fld"><span>New password (12+ characters)</span><input class="inp" id="acctPw" type="password" autocomplete="new-password" minlength="12"></label>
+        <label class="fld"><span>Repeat</span><input class="inp" id="acctPw2" type="password" autocomplete="new-password"></label>
+        <button class="btn primary full" type="submit">Save password</button>` };
+  }
+  // signed out
+  const v = ui.acctView || 'signin';
+  if (v === 'forgot') return { key: 'forgot', form: 'sendReset', html: `<div class="lbl auth-title">RESET PASSWORD</div>${emailField()}
+      <button class="btn primary full" type="submit">Email me a reset link</button><div class="auth-foot">${back}</div>` };
+  if (v === 'sent') return { key: 'sent', html: `<div class="lbl auth-title">CHECK YOUR EMAIL</div><p class="hint">${esc(ui.acctSentMsg || '')}</p><div class="auth-foot">${back}</div>` };
+  if (v === 'signup' && ALLOW_SIGNUP) return { key: 'signup', form: 'signUp', html: `<div class="lbl auth-title">CREATE ACCOUNT</div>${emailField()}
+      <label class="fld"><span>Password (12+ characters)</span><input class="inp" id="acctPw" type="password" autocomplete="new-password" minlength="12"></label>
+      <button class="btn primary full" type="submit">Create account</button><div class="auth-foot">${back}</div>` };
+  return { key: 'signin', form: 'signIn', html: `<p class="hint">Sign in to back up jobs and sync them between iPad, iPhone and computer. Password + a code from your authenticator app — no email links.</p>
+      ${emailField()}
+      <label class="fld"><span>Password</span><input class="inp" id="acctPw" type="password" autocomplete="current-password"></label>
+      <button class="btn primary full" type="submit">Sign in</button>
+      <div class="auth-foot"><button type="button" class="linkish" data-act="acctView" data-v="forgot">Forgot password?</button>${ALLOW_SIGNUP ? '<button type="button" class="linkish" data-act="acctView" data-v="signup">Create account</button>' : ''}</div>
+      <p class="hint">Not signed in? Everything still works and stays on this device.</p>` };
+}
 function openAccount() {
-  const st = sync.status(), signedIn = !!st.email;
-  const m = modal(`<div class="acct"><div class="row between"><div class="lbl">CLOUD SYNC · ACCOUNT</div><button class="btn sm ghost" data-act="closeModal">✕</button></div>
-    <div class="sync-state" data-state="${st.state}"><span class="dot"></span><b>${esc(SYNC_LABEL[st.state] || st.state)}</b>${st.lastSync ? `<small>last sync ${new Date(st.lastSync).toLocaleString()}</small>` : ''}${st.detail && st.state === 'error' ? `<small class="err">${esc(st.detail)}</small>` : ''}</div>
-    ${signedIn ? `<p class="hint">Signed in as <b>${esc(st.email)}</b>. Jobs sync automatically when online; this device keeps working offline.</p>
-      <div class="row wrap"><button class="btn primary grow" data-act="syncNow">⟳ Sync now</button><button class="btn danger grow" data-act="signOut">Sign out</button></div>
-      <p class="hint">Signing out keeps the jobs on this device. Sharing jobs with crew: coming soon.</p>`
-    : `<p class="hint">Sign in with your email to back up jobs and sync them between iPad, iPhone and computer. No password: we email you a code.</p>
-      <label class="fld"><span>Email</span><input class="inp" id="acctEmail" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" placeholder="you@example.com" value="${esc(st.pendingEmail || '')}"></label>
-      <button class="btn ${st.pendingEmail ? '' : 'primary'} full" data-act="sendCode">${st.pendingEmail ? 'Resend code' : 'Email me a sign-in code'}</button>
-      ${st.pendingEmail ? `<label class="fld"><span>Code from the email</span><input class="inp code" id="acctCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="10" placeholder="123456"></label>
-      <button class="btn primary full" data-act="verifyCode">Verify &amp; sign in</button>
-      <p class="hint">Enter the code here — on an installed iPad/iPhone app the email's link opens Safari instead of the app.</p>` : ''}
-      <p class="hint">Not signed in? Everything still works and stays on this device.</p>`}
-    <div class="acct-msg hint" id="acctMsg"></div></div>`);
-  const code = $('#acctCode', m), email = $('#acctEmail', m);
-  if (code) { code.focus(); code.onkeydown = e => { if (e.key === 'Enter') ACTIONS.verifyCode(); }; }
-  else if (email && !email.value) setTimeout(() => email.focus(), 30);
-  if (email) email.onkeydown = e => { if (e.key === 'Enter') ACTIONS.sendCode(); };
+  const st = sync.status(), body = acctBody(st);
+  const stateHtml = `<span class="dot"></span><b>${esc(SYNC_LABEL[st.state] || st.state)}</b>${st.lastSync && st.signedIn ? `<small>last sync ${new Date(st.lastSync).toLocaleString()}</small>` : ''}${st.detail && st.state === 'error' ? `<small class="err">${esc(st.detail)}</small>` : ''}`;
+  const cur = acctOpen() ? $('#modal .acct') : null;
+  if (cur && cur.dataset.key === body.key) {   // same screen: refresh the status line only, keep what's typed
+    const sEl = $('.sync-state', cur); sEl.dataset.state = st.state; sEl.innerHTML = stateHtml; return;
+  }
+  const keepMsg = cur ? ($('#acctMsg', cur) || {}).textContent : '';
+  const inner = `<div class="sync-state" data-state="${st.state}">${stateHtml}</div>${body.html}<div class="acct-msg hint" id="acctMsg" role="alert"></div>`;
+  const m = modal(`<div class="acct" data-key="${body.key}"><div class="row between"><div class="lbl">CLOUD SYNC · ACCOUNT</div><button type="button" class="btn sm ghost" data-act="closeModal">✕</button></div>
+    ${body.form ? `<form class="acct-form col" data-form="${body.form}" novalidate>${inner}</form>` : `<div class="col">${inner}</div>`}</div>`);
+  const f = $('form.acct-form', m);
+  if (f) f.onsubmit = ev => { ev.preventDefault(); AUTH[f.dataset.form](f); };
+  if (keepMsg && body.key !== 'done') acctMsg(keepMsg);
+  const first = $('input:not([readonly])', m);
+  if (first) setTimeout(() => { const e = $('#acctEmail', m); (e && e.value ? $('#acctPw', m) || first : first).focus({ preventScroll: true }); }, 30);
+  const sec = $('#totpSecret', m); if (sec) sec.onfocus = () => sec.select();
+  if (body.after) body.after();
 }
 const acctMsg = (t, err) => { const el = $('#acctMsg'); if (el) { el.textContent = t; el.classList.toggle('err', !!err); } };
+const authErr = e => (e && (e.message || e.error_description)) || String(e || 'Something went wrong');
+async function busy(form, label, fn) {
+  const b = $('button[type=submit]', form); const l = b && b.textContent;
+  if (b) { b.disabled = true; b.textContent = label; }
+  acctMsg('');
+  try { return await fn(); }
+  catch (e) { acctMsg(authErr(e), true); return null; }
+  finally { if (b && b.isConnected) { b.disabled = false; b.textContent = l; } }
+}
+let enrolling = false;
+async function startEnroll() {
+  if (enrolling) return; enrolling = true;
+  try { await sync.startEnroll(); } catch (e) { const w = $('#enrollWait'); if (w) { w.textContent = authErr(e); w.classList.add('err'); } }
+  finally { enrolling = false; }
+}
+const validEmail = v => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);
+const AUTH = {
+  signIn: f => {
+    const email = $('#acctEmail', f).value.trim(), pw = $('#acctPw', f).value; ui.acctEmail = email;
+    if (!validEmail(email)) return acctMsg('Enter a valid email address.', true);
+    if (!pw) return acctMsg('Enter your password.', true);
+    return busy(f, 'Signing in…', async () => { await sync.signIn(email, pw); openAccount(); });
+  },
+  signUp: f => {
+    const email = $('#acctEmail', f).value.trim(), pw = $('#acctPw', f).value; ui.acctEmail = email;
+    if (!validEmail(email)) return acctMsg('Enter a valid email address.', true);
+    if (pw.length < 12) return acctMsg('Use at least 12 characters.', true);
+    return busy(f, 'Creating…', async () => {
+      if (await sync.signUp(email, pw)) { ui.acctView = 'sent'; ui.acctSentMsg = 'Confirm your address with the link we sent, then sign in. You\'ll set up two-factor authentication next.'; }
+      openAccount();
+    });
+  },
+  sendReset: f => {
+    const email = $('#acctEmail', f).value.trim(); ui.acctEmail = email;
+    if (!validEmail(email)) return acctMsg('Enter a valid email address.', true);
+    return busy(f, 'Sending…', async () => {
+      await sync.resetPassword(email);
+      ui.acctView = 'sent'; ui.acctSentMsg = 'If that address has an account, a reset link is on its way. Open it on this device; you\'ll enter your authenticator code, then choose a new password.';
+      openAccount();
+    });
+  },
+  verifyEnroll: f => {
+    const code = $('#acctCode', f).value.replace(/\D/g, '');
+    if (code.length !== 6) return acctMsg('Enter the 6-digit code from your authenticator app.', true);
+    return busy(f, 'Verifying…', async () => { await sync.verifyEnroll(code); openAccount(); toast('Two-factor on — syncing'); });
+  },
+  verifyCode: f => {
+    const code = $('#acctCode', f).value.replace(/\D/g, '');
+    if (code.length !== 6) return acctMsg('Enter the 6-digit code from your authenticator app.', true);
+    return busy(f, 'Verifying…', async () => {
+      try { await sync.verifyCode(code, $('#acctFactor', f)?.value); }
+      catch (e) { $('#acctCode', f).value = ''; throw e; }
+      openAccount(); if (sync.status().signedIn) toast('Signed in — syncing');
+    });
+  },
+  savePassword: f => {
+    const pw = $('#acctPw', f).value;
+    if (pw.length < 12) return acctMsg('Use at least 12 characters.', true);
+    if (pw !== $('#acctPw2', f).value) return acctMsg('Passwords don\'t match.', true);
+    return busy(f, 'Saving…', async () => { await sync.updatePassword(pw); openAccount(); toast('Password updated'); });
+  },
+};
+// A reset/confirmation email link that was already used (e.g. by a mail link scanner) comes back as #error=…
+function authLinkError() {
+  const h = new URLSearchParams(location.hash.slice(1)); const d = h.get('error_description') || h.get('error');
+  if (!d || !syncConfigured) return;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
+  ui.acctView = 'signin'; openAccount();
+  acctMsg(`That email link didn't work (${d.replace(/\+/g, ' ')}). Links in emails can only be used once — some work-mail scanners open them first. Request a new one, or ask for help.`, true);
+}
 
 const ACTIONS = {
-  openAccount: () => openAccount(),
-  sendCode: async () => {
-    const email = ($('#acctEmail')?.value || '').trim();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return acctMsg('Enter a valid email address.', true);
-    acctMsg('Sending…');
-    try { await sync.sendCode(email); openAccount(); acctMsg(`Code sent to ${email}. Check your inbox (and spam).`); }
-    catch (e) { acctMsg(e.message || 'Could not send the code.', true); }
-  },
-  verifyCode: async () => {
-    const code = ($('#acctCode')?.value || '').replace(/\D/g, '');
-    if (code.length < 6) return acctMsg('Enter the code from the email.', true);
-    acctMsg('Verifying…');
-    try { await sync.verifyCode(code); openAccount(); toast('Signed in — syncing'); }
-    catch (e) { acctMsg(e.message || 'Invalid or expired code.', true); }
-  },
+  openAccount: () => { if (ui.acctView === 'sent') ui.acctView = 'signin'; openAccount(); },
+  acctView: el => { ui.acctView = el.dataset.v; openAccount(); },
   syncNow: () => sync.syncNow('manual'),
-  signOut: async () => { try { await sync.signOut(); } catch (e) { toast(e.message); } openAccount(); },
+  signOut: async () => { try { await sync.signOut(); } catch (e) { toast(e.message); } ui.acctView = 'signin'; openAccount(); },
   tab: el => { ui.tab = el.dataset.tab; render(['panel']); },
   pickScreen: el => { job().currentScreenId = el.dataset.id; ui.sel = null; ui.probe = null; if (ui.view === 'canvas') ui.view = 'screen'; commit(['screens', 'panel', 'chips']); },
   addScreen: () => { const j = job(), s = Store.makeScreen(`Screen ${j.screens.length + 1}`, 1920, 1080); const last = j.screens[j.screens.length - 1]; if (last) s.x = last.x + last.w; j.screens.push(s); j.currentScreenId = s.id; ui.tab = 'screen'; ui.sel = null; commit(); },
@@ -636,7 +741,7 @@ document.addEventListener('change', e => {
 document.addEventListener('input', e => { const el = e.target; if (el.dataset.bind === 'box.color' && box()) { box().color = el.value; drawStage(); } });
 
 new ResizeObserver(() => drawStage()).observe(wrap);
-if (syncConfigured) { renderSync(); sync.init(); }
+if (syncConfigured) { renderSync(); sync.init(); authLinkError(); }
 window.addEventListener('orientationchange', () => setTimeout(drawStage, 300));
 render();
 window.__pm = { get S() { return S; }, ui, G, render, job, scr, ACTIONS, screenToBlob, sync };

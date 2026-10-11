@@ -24,8 +24,9 @@ const browser = await chromium.launch();
   await page.goto(URL); await page.waitForTimeout(1500);
   ok(await page.evaluate(() => typeof window.supabase?.createClient === 'function'), 'vendored supabase-js loaded from ' + reqs.find(u => u.includes('vendor/')));
   ok((await page.evaluate(() => __pm.sync.status().state)) === 'signedout', 'real backend: signed-out state');
-  const err = await page.evaluate(async () => { try { await __pm.sync.verifyCode('123456', 'nobody@example.com'); return 'no error'; } catch (e) { return e.message; } });
-  ok(/expired|invalid/i.test(err) && reqs.some(u => u.includes('ylilrphbplhauxqdbqni.supabase.co/auth/v1/verify')), 'real Supabase Auth reachable: bogus OTP rejected → "' + err + '"');
+  const err = await page.evaluate(async () => { try { await __pm.sync.signIn('nobody@example.com', 'definitely-not-the-password'); return 'no error'; } catch (e) { return e.message; } });
+  ok(/invalid login credentials/i.test(err) && reqs.some(u => u.includes('ylilrphbplhauxqdbqni.supabase.co/auth/v1/token?grant_type=password')), 'real Supabase Auth reachable: bogus password rejected → "' + err + '"');
+  ok((await page.evaluate(() => __pm.sync.status().state)) === 'signedout', 'still signed out after the rejected password');
   ok(errs.length === 0, 'no page errors ' + JSON.stringify(errs));
   await ctx.close();
 }
