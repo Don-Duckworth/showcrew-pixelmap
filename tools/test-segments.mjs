@@ -206,4 +206,40 @@ t('resize: keep pixel sizes → warns; equal split frozen to whole px', () => {
   const eqs = G.resizeScreen({ w: 1536, h: 1280, segments: 6, boxes: [] }, 768, 640);   // scale: equal split just follows
   assert.equal(eqs.segMode, undefined); assert.deepEqual(G.segments(eqs).map(g => g.cx), [64, 192, 320, 448, 576, 704]);
 });
+// ---------- v1.6 playback fit on a target output ----------
+t('playback: Don 55.561×5.28 in on 11344×1080 → 11344×1078.03, letterbox about 1 px top/bottom', () => {
+  const f = SL.playbackFit(55.561, 5.28, 11344, 1080);
+  assert.equal(f.kind, 'letterbox'); assert.equal(f.fitBy, 'width'); assert.equal(f.imgW, 11344); near(f.imgH, 1078.028, 1e-3); assert.equal(f.areaText, '11344 × 1078.03 px');
+  near(f.offY, 0.986, 1e-3); near(f.totY, 1.972, 1e-3); assert.equal(f.offX, 0); near(f.pxPerIn, 204.172, 1e-3); near(f.scale96, 2.127, 1e-3);
+  assert.ok(f.bars.approx); assert.ok(f.headline.startsWith('Letterbox — Black top and bottom: about 1 px each (exact 0.986 px each, 1.972 px total'), f.headline);
+  const L = SL.landRects(f, 11344, 1080, DON().segs.map(g => ({ name: g.name, x: g.x, y: g.y, w: g.w, h: g.h })));
+  assert.deepEqual(L.map(l => [Math.round(l.out.x0), Math.round(l.out.x1)]), [[0, 3510], [3510, 7830], [7830, 11340]]);   // x unchanged (width fits exactly)
+  near(L[0].out.y0, 0.986, 1e-3); near(L[0].out.y1, 1079.014, 1e-3); assert.ok(L.every(l => !l.moved), 'no edge moves ≥ 1 px');
+});
+t('playback: recommended 1/3 slide (39.389×3.75 in) on its own 11344×1080 → no bars; on 1920×1080 / 3840×2160 → letterbox', () => {
+  const p = SL.pptOptions(11344, 1080).options.find(o => o.recommended);
+  let f = SL.playbackFit(p.slideW, p.slideH, 11344, 1080); assert.equal(f.kind, 'none'); assert.equal(f.bars.approx, false); assert.equal(f.areaText, '11344 × 1080 px'); near(f.pxPerIn, 288, 1e-9);
+  const L = SL.landRects(f, 11344, 1080, [{ name: 'Center', x: 3510, y: 0, w: 4320, h: 1080 }]); assert.equal(L[0].maxShift < 1e-6, true);
+  f = SL.playbackFit(p.slideW, p.slideH, 1920, 1080); assert.equal(f.kind, 'letterbox'); near(f.imgH, 182.793, 1e-3); assert.ok(/about 449 px each/.test(f.headline), f.headline);
+  const M = SL.landRects(f, 11344, 1080, [{ name: 'Center', x: 3510, y: 0, w: 4320, h: 1080 }]);   // native scaled to 1920×1080: y 0–1080; lands y 448.6–631.4
+  assert.ok(M[0].moved); assert.deepEqual(M[0].flags.map(x => x.edge), ['top', 'bottom']); near(M[0].out.x0, 3510 / 11344 * 1920, 1e-6);
+  assert.equal(SL.playbackFit(p.slideW, p.slideH, 3840, 2160).kind, 'letterbox');
+});
+t('playback: pillarbox, odd totals, sub-pixel, exact', () => {
+  let f = SL.playbackFit(10, 7.5, 1920, 1080); assert.equal(f.kind, 'pillarbox'); assert.equal(f.headline, 'Pillarbox — Black left and right: 240 px each (480 px total)'); assert.equal(f.areaText, '1440 × 1080 px'); near(f.offX, 240);
+  f = SL.playbackFit(16, 9, 1920, 1083); assert.equal(f.kind, 'letterbox'); assert.ok(f.bars.odd); assert.equal(f.bars.lo, 1); assert.equal(f.bars.hi, 2);
+  assert.ok(f.headline.includes('about 1.5 px each (3 px total, odd) — one side gets 1 px and the other 2 px'), f.headline);
+  f = SL.playbackFit(16, 9, 1921, 1080); assert.equal(f.kind, 'pillarbox'); assert.ok(f.headline.includes('(1 px total, odd) — one side gets 0 px and the other 1 px'), f.headline);
+  f = SL.playbackFit(16, 9, 1923, 1080); assert.equal(f.kind, 'pillarbox'); assert.ok(f.headline.includes('one side gets 1 px and the other 2 px'));
+  f = SL.playbackFit(55.561, 5.28, 5334, 507); assert.equal(f.kind, 'none'); assert.ok(f.bars.subpixel); assert.ok(f.headline.startsWith('No black bars (only 0.11 px'), f.headline);
+  f = SL.playbackFit(13.333, 7.5, 1920, 1080); assert.equal(f.kind, 'none');   // 13.333 in is 0.0025% narrow: < 0.5 px
+  assert.equal(SL.playbackFit(0, 5, 10, 10), null); assert.equal(SL.playbackFit(1, 1, 0, 10), null);
+  const L = SL.landRects(SL.playbackFit(10, 7.5, 1920, 1080), 1920, 1080, [{ name: 'A', x: 0, y: 0, w: 960, h: 1080 }]);
+  assert.deepEqual(L[0].flags.map(x => [x.edge, Math.round(x.shift)]), [['left', 240]]);   // left half: 0–960 → 240–960 (right edge lands where it was)
+});
+t('store: pptOut kept/sanitized, optional', () => {
+  const j = Store.sanitizeJob({ name: 'x', screens: [{ name: 'S', w: 11344, h: 1080, pptOut: { w: '1920.4', h: 1080 } }, { name: 'T', w: 10, h: 10, pptOut: { w: -1, h: 5 } }, { name: 'U', w: 10, h: 10 }] });
+  assert.deepEqual(j.screens.map(s => s.pptOut), [{ w: 1920, h: 1080 }, null, null]);
+  assert.equal(Store.makeScreen('n', 100, 100).pptOut, null);
+});
 console.log(`segment + slide tests passed (${n} groups)`);

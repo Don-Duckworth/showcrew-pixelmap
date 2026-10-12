@@ -215,6 +215,19 @@ code { font: 12px var(--mono); color: var(--cyan); background: rgba(0, 229, 255,
 .sd-res .big { font-size: 24px; }
 .sd-tbl td { font-size: 12.5px; }
 
+/* v1.6 target output + playback fit */
+.qp { gap: 6px; } .qp .btn.sm { min-height: 36px; padding: 0 10px; font: 600 12.5px var(--mono); }
+.qp .btn.on { border-color: var(--cyan); color: #fff; background: rgba(0, 229, 255, .16); box-shadow: 0 0 12px rgba(0, 229, 255, .3); }
+.pb { margin-top: 10px; border-radius: 10px; padding: 10px; border: 1px solid var(--edge); background: rgba(0, 0, 0, .25); display: flex; flex-direction: column; gap: 8px; }
+.pb-letterbox, .pb-pillarbox { border-color: rgba(255, 176, 32, .45); background: linear-gradient(180deg, rgba(0,0,0,.6) 0 5px, transparent 5px calc(100% - 5px), rgba(0,0,0,.6) calc(100% - 5px)), rgba(0, 0, 0, .25); }
+.pb-pillarbox { background: linear-gradient(90deg, rgba(0,0,0,.6) 0 5px, transparent 5px calc(100% - 5px), rgba(0,0,0,.6) calc(100% - 5px)), rgba(0, 0, 0, .25); }
+.pb-h { margin: 0; font-size: 13.5px; font-weight: 650; line-height: 1.4; }
+.pb-tbl td { font-size: 12px !important; } .pb-tbl tr.moved td { background: rgba(255, 176, 32, .08); }
+.pb .dim, .dim { color: var(--dim); }
+.pb-flag, .pb-ok { margin: 0; font-size: 12.5px; }
+.sd-pb { border: 1px solid var(--edge); border-radius: 10px; padding: 8px 10px; background: rgba(0, 0, 0, .25); }
+.sd-pb ul { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.45; display: flex; flex-direction: column; gap: 4px; }
+
 /* ---------- modal / toast ---------- */
 #modal { position: fixed; inset: 0; z-index: 50; background: rgba(0, 4, 10, .7); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: flex-start; justify-content: center; padding: calc(60px + var(--sat)) 14px 14px; }
 #modal[hidden] { display: none; }
@@ -257,3 +270,4 @@ code { font: 12px var(--mono); color: var(--cyan); background: rgba(0, 229, 255,
   .ro th { position: static; }
   .ro.gl { font-size: 12px; } .ro.gl td { padding: 8px 4px; } .ro.gl .v { font-size: 13px; }
 }
+.pb .readout .v { font-size: 15px; }

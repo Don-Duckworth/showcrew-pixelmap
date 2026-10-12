@@ -326,23 +326,52 @@ function slidePlan(s) {
   return { o, p, kp: SL.keynotePlan(s.w, s.h) };
 }
 const cpy = (v, label = v) => `<button class="cpy" data-act="copy" data-copy="${esc(v)}" title="Copy ${esc(v)}">${label}<i>⧉</i></button>`;
+// v1.6: target output resolution + full-screen playback fit (uniform scale, centered)
+const outOf = s => (s.pptOut && s.pptOut.w > 0 && s.pptOut.h > 0 ? { w: s.pptOut.w, h: s.pptOut.h, custom: true } : { w: s.w, h: s.h, custom: false });
+function outputCard(s) {
+  const o = outOf(s), picks = [[s.w, s.h, `Screen ${s.w}×${s.h}`, true], ...SL.COMMON_OUTPUTS.filter(([w, h]) => !(w === s.w && h === s.h)).map(([w, h]) => [w, h, `${w}×${h}`, false])];
+  return `<div class="card outcard"><div class="lbl">TARGET OUTPUT RESOLUTION · SLIDE SHOW</div>
+    <div class="grid2">${numInput('pptout.w', o.w, 'Output width px', 'min="1" step="1"')}${numInput('pptout.h', o.h, 'Output height px', 'min="1" step="1"')}</div>
+    <div class="row wrap qp">${picks.map(([w, h, l, scrPick]) => `<button class="btn sm ${(scrPick ? !o.custom : o.custom && o.w === w && o.h === h) ? 'on' : ''}" data-act="pptOut" data-w="${w}" data-h="${h}"${scrPick ? ' data-screen="1"' : ''}>${l}</button>`).join('')}</div>
+    <p class="hint">What the show computer sends to the processor. Full screen, PowerPoint and Keynote scale the slide <b>uniformly</b> to fit this output and center it (no stretching, no cropping), so a different aspect ratio gives black bars. ${o.custom ? `Set for this screen (the screen itself is ${s.w}×${s.h}).` : 'Defaults to this screen\'s resolution.'}</p></div>`;
+}
+function playbackHtml(fit, s, rects, key) {
+  if (!fit) return '';
+  const F2 = SL.f2, L = rects.length ? SL.landRects(fit, s.w, s.h, rects) : [], moved = L.filter(l => l.moved), scaled = fit.outW !== s.w || fit.outH !== s.h;
+  let h = `<div class="pb pb-${fit.kind}" data-pb="${key}"><div class="lbl">FULL SCREEN ON A ${fit.outW}×${fit.outH} OUTPUT</div>
+    <p class="pb-h ${fit.kind === 'none' ? 'fitok' : 'warnc'}">${fit.kind === 'none' ? '✓' : '▮'} ${esc(fit.headline)}.</p>
+    <div class="readout"><div><span class="lbl">RENDERED SLIDE</span><span class="v">${fit.areaText}</span><span class="r">${SL.f2(fit.coverPct)}% of the output</span></div>
+      <div><span class="lbl">SCALE</span><span class="v">${SL.f3(fit.pxPerIn)} px/in</span><span class="r">×${SL.f3(fit.scale96)} of 96 px/in · fitted by ${fit.fitBy}</span></div></div>`;
+  if (!L.length) return h + '</div>';
+  h += `<table class="ro sl pb-tbl"><thead><tr><th>Item</th><th>${scaled ? `Native → ${fit.outW}×${fit.outH}` : 'Native px'}</th><th>Lands at (px)</th><th>Shift</th></tr></thead><tbody>${L.map(l => `<tr class="${l.moved ? 'moved' : ''}"><td>${esc(l.name)}</td>
+      <td>x ${F2(l.native.x0)}–${F2(l.native.x1)}<span class="r">y ${F2(l.native.y0)}–${F2(l.native.y1)}</span></td>
+      <td><b>x ${F2(l.out.x0)}–${F2(l.out.x1)}</b><span class="r">y ${F2(l.out.y0)}–${F2(l.out.y1)} · ${F2(l.w)}×${F2(l.h)}</span></td>
+      <td>${l.moved ? `<span class="warnc">⚠ ${l.flags.map(f => `${f.edge} ${f.shift > 0 ? '+' : ''}${F2(f.shift)}`).join(', ')}</span>` : `<span class="dim">≤ ${F2(l.maxShift)}</span>`}</td></tr>`).join('')}</tbody></table>`;
+  h += moved.length
+    ? `<p class="warn pb-flag">⚠ ${moved.reduce((n, l) => n + l.flags.length, 0)} edge${moved.reduce((n, l) => n + l.flags.length, 0) > 1 ? 's' : ''} shift by 1 px or more from the native position: ${moved.map(l => `${esc(l.name)} (${l.flags.map(f => `${f.edge} ${f.shift > 0 ? '+' : ''}${F2(f.shift)} px`).join(', ')})`).join('; ')}.</p>`
+    : `<p class="fitok pb-ok">✓ Every edge stays within 1 px of its native position (largest shift ${F2(Math.max(...L.map(l => l.maxShift)))} px).</p>`;
+  return h + `<p class="hint">Assumes the deck is laid out across the whole slide in proportion to the screen (like the PixelMap template)${scaled ? `; native positions are scaled ×${SL.f3(fit.outW / s.w)} W, ×${SL.f3(fit.outH / s.h)} H to the output` : ''}.</p></div>`;
+}
 function panelSlides() {
   const s = scr(), U = slUnit(), { o, p, kp } = slidePlan(s), rects = slideRects(s), f3 = SL.f3;
   const uv = (inch, cm) => (U === 'cm' ? cm : inch);
   let html = `<div class="row between"><div class="lbl">SLIDES FOR ${esc(s.name.toUpperCase())} · ${s.w}×${s.h}</div>
     <div class="seg mini">${['in', 'cm'].map(k => `<button class="${U === k ? 'on' : ''}" data-act="slideUnit" data-u="${k}">${k === 'in' ? 'inches' : 'cm'}</button>`).join('')}</div></div>`;
   html += `<p class="hint">PowerPoint maps <b>96 px = 1 in</b> (Widescreen 13.333 × 7.5 in = 1280×720) and allows <b>1–56 in</b> (2.54–142.24 cm) per side. At 1:1 this screen would be <b>${f3(uv(o.nativeW, o.nativeW * 2.54))} × ${f3(uv(o.nativeH, o.nativeH * 2.54))} ${U}</b> — ${o.impossible ? '<span class="warnc">aspect is wider than 56:1, PowerPoint can\'t hold it</span>' : o.fits ? 'fits as-is.' : o.tooBig ? '<span class="warnc">over the 56 in limit, so the slide has to be scaled down.</span>' : '<span class="warnc">under the 1 in minimum, so the slide is scaled up.</span>'}</p>`;
+  html += outputCard(s);
+  const OUT = outOf(s);
   if (!p) return html + `<p class="warn">⚠ No PowerPoint slide size keeps this exact ${G.aspect(s.w, s.h).decText} ratio within 1–56 in. Split the content across slides or use a media server.</p>`;
   // --- PowerPoint slide size
   html += `<div class="card pptcard"><div class="lbl">POWERPOINT · DESIGN ▸ SLIDE SIZE ▸ CUSTOM</div>
     ${o.options.length > 1 ? `<div class="seg full">${o.options.map(x => `<button class="${x === p ? 'on' : ''}" data-act="pptOpt" data-k="${x.key}">${esc(x.label)}${x.recommended ? ' ★' : ''}</button>`).join('')}</div>` : ''}
     <div class="hud-stat"><div><div class="lbl">WIDTH</div><div class="big">${cpy(`${f3(uv(p.slideW, p.slideWcm))} ${U}`, `${f3(uv(p.slideW, p.slideWcm))}<small>${U}</small>`)}</div><div class="sub">${f3(p.slideWpt)} pt</div></div>
       <div><div class="lbl">HEIGHT</div><div class="big">${cpy(`${f3(uv(p.slideH, p.slideHcm))} ${U}`, `${f3(uv(p.slideH, p.slideHcm))}<small>${U}</small>`)}</div><div class="sub">${f3(p.slideHpt)} pt</div></div></div>
-    <p class="hint">Scale <b>${p.key === 'exact' ? `1/${p.N}` : p.key === 'up' ? `×${p.M}` : f3(p.k)}</b> of 1:1 (${f3(p.k * 100)}%) · 1 slide inch = <b>${f3(p.pxPerIn)} screen px</b> · ${p.emuExact ? 'every screen pixel is a whole number of EMU (exact)' : `${f3(p.emuPerPx)} EMU per px`}. Type the values with the unit (e.g. <code>${f3(uv(p.slideW, p.slideWcm))} ${U}</code>) — PowerPoint converts to your region's units. Then pick <i>Don't Scale</i> / <i>Ensure Fit</i>.</p></div>`;
+    <p class="hint">Scale <b>${p.key === 'exact' ? `1/${p.N}` : p.key === 'up' ? `×${p.M}` : f3(p.k)}</b> of 1:1 (${f3(p.k * 100)}%) · 1 slide inch = <b>${f3(p.pxPerIn)} screen px</b> · ${p.emuExact ? 'every screen pixel is a whole number of EMU (exact)' : `${f3(p.emuPerPx)} EMU per px`}. Type the values with the unit (e.g. <code>${f3(uv(p.slideW, p.slideWcm))} ${U}</code>) — PowerPoint converts to your region's units. Then pick <i>Don't Scale</i> / <i>Ensure Fit</i>.</p>
+    ${playbackHtml(SL.playbackFit(p.slideW, p.slideH, OUT.w, OUT.h), s, rects, 'rec')}</div>`;
   // --- export / playback
   html += `<div class="card"><div class="lbl">BACK TO ${s.w}×${s.h} NATIVE PIXELS</div>
     <ul class="steps">
-      <li><b>Playback:</b> full screen on a ${s.w}×${s.h} output PowerPoint scales the slide uniformly to fit — same aspect ratio, so it fills the output exactly.</li>
+      <li><b>Playback:</b> full screen on the ${OUT.w}×${OUT.h} output PowerPoint scales the slide uniformly to fit and centers it — ${esc(SL.playbackFit(p.slideW, p.slideH, OUT.w, OUT.h).headline)}.</li>
       <li><b>Mac — PNG export:</b> File ▸ Export ▸ File Format <b>PNG</b> ▸ Width ${cpy(String(s.w))} (Height becomes ${s.h}).</li>
       <li><b>Windows — PNG export:</b> ${p.winExact
         ? `set registry DWORD <code>ExportBitmapResolution</code> = ${cpy(String(p.winDpi))} (Decimal) under <code>HKCU\\Software\\Microsoft\\Office\\16.0\\PowerPoint\\Options</code>, then File ▸ Save As ▸ PNG → <b>${s.w}×${s.h}</b>.`
@@ -386,6 +415,8 @@ function currentSlideCard(s, rects, U) {
   else html += `<div class="fitwarn warn"><div class="fw-h">⚠ ASPECT MISMATCH <span>${c.diffPct > 0 ? '+' : ''}${c.diffPct.toFixed(2)}%</span></div><ul>
       <li>Your slide is ${c.diffPct > 0 ? 'wider' : 'taller'} than the screen. Full screen on ${s.w}×${s.h} it is fitted by ${c.fitBy}: the image is <b>${G.fmt1(c.imgW)} × ${G.fmt1(c.imgH)} px</b> with ${G.fmt1(c.barsPx.each)} px bars ${c.barsPx.side} (${G.fmt1(c.barsPx.total)} px total) — nothing is stretched.</li>
       <li>Keep your width → set height to ${cpy(`${f3(cv(c.keepWidthH))} ${U}`, `<b>${f3(cv(c.keepWidthH))} ${U}</b>`)}; or keep your height → width ${cpy(`${f3(cv(c.keepHeightW))} ${U}`, `<b>${f3(cv(c.keepHeightW))} ${U}</b>`)}${p ? `; or use the ★ size above (${f3(U === 'cm' ? p.slideWcm : p.slideW)} × ${f3(U === 'cm' ? p.slideHcm : p.slideH)} ${U})` : ''}.</li></ul></div>`;
+  const OUT = outOf(s);
+  html += playbackHtml(SL.playbackFit(c.cw, c.ch, OUT.w, OUT.h), s, rects, 'cur');
   if (rects.length) html += `<div class="lbl mt">WHERE THEY LAND ON YOUR SLIDE (${U})</div>${slideTable(rects.map(r => { const q = SL.onCurrent(c, r); return { r, L: q.left[U], T: q.top[U], W: q.width[U], H: q.height[U] }; }), U)}
     <p class="hint">Assumes the slide is shown full screen on the ${s.w}×${s.h} output (uniform fit, centered). 1 slide inch = ${f3(c.pxPerIn)} screen px.${c.match ? '' : ' Negative/over-size values mean that edge falls in the bars.'}</p>`;
   return html + '</div>';
@@ -397,6 +428,8 @@ function slideSummaryText(s) {
   L.push(`PowerPoint slide size (Design > Slide Size > Custom): ${f3(p.slideW)} in × ${f3(p.slideH)} in  (${f3(p.slideWcm)} × ${f3(p.slideHcm)} cm, ${f3(p.slideWpt)} × ${f3(p.slideHpt)} pt)`);
   L.push(`  ${p.label}; scale ${f3(p.k)} of 1:1 at 96 px/in; 1 slide inch = ${f3(p.pxPerIn)} screen px`);
   L.push(`  Export to ${s.w}×${s.h}: Mac File > Export > PNG width ${s.w}; Windows ExportBitmapResolution ${p.winExact ? `= ${p.winDpi}` : `would need ${f3(p.pxPerIn)} (not whole — ${p.winCeilDpi} gives ${p.winCeilPx.join('×')})`}`);
+  const OUT = outOf(s), pf = SL.playbackFit(p.slideW, p.slideH, OUT.w, OUT.h);
+  L.push(`  Full screen on ${OUT.w}×${OUT.h}: ${pf.headline}; slide renders ${pf.areaText} at ${f3(pf.pxPerIn)} px/in`);
   L.push(`Keynote slide size: ${f3(kp.ptW)} × ${f3(kp.ptH)} pt${kp.N > 1 ? ` (1/${kp.N} scale; Keynote max ≈ 8192)` : ''}`);
   const fit = G.segFit(s); if (!fit.exact) { L.push('', 'Segment fit warnings:'); fit.issues.forEach(i => L.push('  ! ' + i.text)); }
   L.push('', `Positions (${U}) — Left, Top, Width, Height | px X, Y, W, H | Keynote pt X, Y, W, H`);
@@ -706,6 +739,11 @@ function renderSdPreview() {
   let h = `<div class="sd-res"><div class="lbl">NEW PIXEL SIZE</div><div class="big">${r.w}<i>×</i>${r.h}</div>`;
   if (!r.px) h += `<div class="sub">exact ${exact(r.exW, r.w)} × ${exact(r.exH, r.h)} px · ${SL.f3(r.ppi)} px/in · ${SL.f3(r.wIn)} × ${SL.f3(r.hIn)} in${r.w !== r.exW || r.h !== r.exH ? ' · rounded to whole px' : ''}</div>`;
   h += `<div class="sub">aspect ${G.aspect(r.w, r.h).decText}${d.kind !== 'new' ? ` (was ${G.aspect(s.w, s.h).decText}) · scale ×${SL.f3(r.w / s.w)} W, ×${SL.f3(r.h / s.h)} H` : ''}</div></div>`;
+  if (!r.px) {
+    const o = outOf(s), outs = [[r.w, r.h, d.kind === 'new' ? 'the new screen' : `the new ${d.kind === 'dup' ? 'copy' : 'size'}`]];
+    if (d.kind !== 'new' && !(o.w === r.w && o.h === r.h)) outs.push([o.w, o.h, `${esc(s.name)}'s ${o.custom ? 'target output' : 'current output'}`]);
+    h += `<div class="sd-pb"><div class="lbl">FULL-SCREEN PLAYBACK OF THIS SLIDE</div><ul>${outs.map(([w, hh, l]) => { const f = SL.playbackFit(r.wIn, r.hIn, w, hh); return `<li data-out="${w}x${hh}"><b>${w}×${hh}</b> (${l}): ${esc(f.headline)} · slide renders <b>${f.areaText}</b> · ${SL.f3(f.pxPerIn)} px/in</li>`; }).join('')}</ul></div>`;
+  }
   if (r.outOfRange) h += `<p class="warn">⚠ ${SL.f3(r.wIn)} × ${SL.f3(r.hIn)} in is outside PowerPoint's 1–56 in per side — check the numbers.</p>`;
   if (d.kind !== 'new') {
     const c = G.resizeScreen(s, r.w, r.h, d.seg), f = G.segFit(c), segs = G.hasSegs(c) ? G.segments(c) : [], old = G.segments(s);
@@ -948,6 +986,7 @@ const ACTIONS = {
   },
   physUnit: el => { scr().physUnit = el.dataset.u; commit(['panel']); },
   slideUnit: el => { prefs.slideUnit = el.dataset.u; savePrefs(); render(['panel']); },
+  pptOut: el => { const s = scr(); s.pptOut = el.dataset.screen ? null : { w: +el.dataset.w, h: +el.dataset.h }; commit(['panel']); },
   pptOpt: el => { ui.pptOpt = el.dataset.k; render(['panel']); },
   pptCurUnit: el => { const s = scr(); if (s.pptCur) { s.pptCur.unit = el.dataset.u; commit(['panel']); } else { ui.pptCurUnit = el.dataset.u; prefs.slideUnit = el.dataset.u; savePrefs(); render(['panel']); } },
   slideCopy: () => { copyLong(slideSummaryText(scr())); },
@@ -1013,6 +1052,11 @@ document.addEventListener('change', e => {
     return commit();
   }
   if (ns === 'segtool') { if (k === 'gap') ui.segGap = n; else ui.segSplit = n; return; }
+  if (ns === 'pptout') {
+    const o = outOf(s), x = int(n, 1, 65536); if (!x || v === '') return render(['panel']);
+    o[k] = x; s.pptOut = o.w === s.w && o.h === s.h ? null : { w: o.w, h: o.h };
+    return commit(['panel']);
+  }
   if (ns === 'pptcur') {
     const pc = s.pptCur || { w: null, h: null, unit: ui.pptCurUnit || slUnit() };
     pc[k] = v === '' || !(n > 0) ? null : n;

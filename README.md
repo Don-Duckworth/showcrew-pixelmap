@@ -97,3 +97,17 @@ Still to do in the dashboard (steps 2–5 below):
 Optional: *Authentication → Emails → SMTP* with your own mail provider — the built-in sender is heavily rate-limited, which now only matters for
 password resets. Password-reset links are one-time links, so a work-mail link scanner can still burn them; if that happens, reset from a personal
 address or delete + re-create the user in the dashboard. Free-plan projects pause after a week of no use; open the dashboard and *Restore* if that happens.
+
+## Target output & full-screen playback fit (v1.6)
+
+Slides tab ▸ **Target output resolution** (W × H px; defaults to the selected screen, quick picks for the screen size, 1280×720, 1920×1080, 1920×1200, 2560×1440, 3840×2160, 4096×2160; saved per screen as `pptOut`, `null` = follow the screen).
+
+For the recommended PowerPoint slide size, your current slide size and the slide entered in the New / Duplicate / Resize dialogs, PixelMap works out how Slide Show fits the slide into that output — uniform scale, centered — and states:
+
+* letterbox (black top/bottom), pillarbox (black left/right) or no bars, with pixels per side — odd totals say "about n.5 px each — one side gets n, the other n+1" (PowerPoint doesn't document which side), fractional ones say "about" and give the exact value; under 0.5 px total counts as no bars;
+* the rendered slide area in px, the scale (output px per slide inch and × of 96 px/in);
+* where each segment / PiP box lands in output px (deck laid out across the whole slide in proportion to the screen), flagging every edge that moves ≥ 1 px from its native position (scaled to the output when the output isn't the screen size).
+
+Example: 55.561 × 5.28 in on 11344×1080 → 11344 × 1078.03 px at 204.172 px/in, "Black top and bottom: about 1 px each (exact 0.986 px each, 1.972 px total)"; no segment edge moves ≥ 1 px.
+
+Tests: `node tools/test-segments.mjs` (playback math) and `node tools/playback-test.mjs` (browser, iPad / iPhone / desktop).

@@ -156,3 +156,62 @@ export function slideToPx(sw, sh, unit = 'in', by = 'ppi', value = PPT.PX_PER_IN
 }
 /** "55.561x5.28" (or "141.125x13.411cm") for screen names. */
 export const slideLabel = (w, h, unit = 'in') => `${f3(+w)}x${f3(+h)}${unit === 'cm' ? 'cm' : ''}`;
+
+// ---------- v1.6: full-screen playback fit on a target output resolution ----------
+// Slide Show on a W×H output: PowerPoint (and Keynote) scale the slide UNIFORMLY to fit inside the output and center it —
+// no stretching, no cropping. Different aspect → black bars: left/right (pillarbox) or top/bottom (letterbox).
+// Exact bar sizes can be fractional; the renderer rounds them to whole pixels and doesn't say which side gets an odd pixel,
+// so odd totals are reported as "one side n, the other n+1" and fractional ones as "about".
+export const f2 = v => { const x = Math.round(v * 100) / 100; return Math.abs(x - Math.round(x)) < 1e-9 ? String(Math.round(x)) : x.toFixed(2).replace(/0+$/, ''); };
+export const COMMON_OUTPUTS = [[1280, 720], [1920, 1080], [1920, 1200], [2560, 1440], [3840, 2160], [4096, 2160]];
+const EPS = 1e-6;
+
+/** Describe one bar axis. total = exact px of black on that axis (both sides together). */
+export function barsText(total, axis) {
+  const where = axis === 'tb' ? 'top and bottom' : 'left and right', W = axis === 'tb' ? 'Black top and bottom' : 'Black left and right';
+  if (!(total > EPS)) return { none: true, text: 'No black bars — the slide fills the output exactly', where, approx: false };
+  const each = total / 2, Tr = Math.round(total), whole = Math.abs(total - Tr) < 0.01;
+  if (total < 0.5) return { none: true, subpixel: true, where, approx: true, text: `No black bars (only ${f2(total)} px left over in total — less than one pixel row, at most a faint edge)` };
+  if (whole && Tr % 2 === 0) return { none: false, where, approx: false, each: Tr / 2, total: Tr, text: `${W}: ${Tr / 2} px each (${Tr} px total)` };
+  if (whole) return { none: false, where, approx: true, odd: true, each, total: Tr, lo: (Tr - 1) / 2, hi: (Tr + 1) / 2,
+    text: `${W}: about ${f2(each)} px each (${Tr} px total, odd) — one side gets ${(Tr - 1) / 2} px and the other ${(Tr + 1) / 2} px; PowerPoint doesn't document which side gets the extra pixel` };
+  const ae = Math.round(each);
+  return { none: false, where, approx: true, each, total, totalRounded: Tr,
+    text: `${W}: about ${ae >= 1 ? ae + ' px' : 'less than 1 px'} each (exact ${f3(each)} px each, ${f3(total)} px total${Tr !== total ? ` ≈ ${Tr} px once rounded to whole pixels` : ''})` };
+}
+
+/** Fit a slide (inches) full screen into an outW×outH output. */
+export function playbackFit(slideWIn, slideHIn, outW, outH) {
+  const sw = +slideWIn, sh = +slideHIn, W = +outW, H = +outH;
+  if (!(sw > 0 && sh > 0 && W > 0 && H > 0)) return null;
+  const byW = W / sw, byH = H / sh, k = Math.min(byW, byH);
+  const imgW = Math.abs(byW - k) < 1e-12 ? W : sw * k, imgH = Math.abs(byH - k) < 1e-12 ? H : sh * k;
+  const totX = Math.max(0, W - imgW), totY = Math.max(0, H - imgH);
+  const axis = totY > EPS ? 'tb' : totX > EPS ? 'lr' : null, bars = barsText(axis === 'tb' ? totY : totX, axis || 'tb');
+  const kind = bars.none ? 'none' : axis === 'tb' ? 'letterbox' : 'pillarbox';
+  return {
+    slideWIn: sw, slideHIn: sh, outW: W, outH: H, pxPerIn: k, scale96: k / PPT.PX_PER_IN, fitBy: byW <= byH ? 'width' : 'height',
+    imgW, imgH, offX: totX / 2, offY: totY / 2, totX, totY, axis, kind, bars,
+    headline: kind === 'none' ? bars.text : `${kind === 'letterbox' ? 'Letterbox' : 'Pillarbox'} — ${bars.text}`,
+    areaText: `${f2(imgW)} × ${f2(imgH)} px`, coverPct: imgW * imgH / (W * H) * 100,
+  };
+}
+
+/**
+ * Where screen rects (native screen px) land in output px after playbackFit(), assuming the deck is laid out across the
+ * whole slide in proportion to the screen (as the PixelMap template / "scale" duplicate do): x/screenW of the slide width, etc.
+ * "native" = the rect's own position, scaled to the output if the output size isn't the screen size.
+ * Edges that move ≥ 1 px are flagged.
+ */
+export function landRects(fit, screenW, screenH, rects) {
+  const sx = fit.outW / screenW, sy = fit.outH / screenH;
+  return rects.map(r => {
+    const n = { x0: r.x * sx, x1: (r.x + r.w) * sx, y0: r.y * sy, y1: (r.y + r.h) * sy };
+    const o = { x0: fit.offX + r.x / screenW * fit.imgW, x1: fit.offX + (r.x + r.w) / screenW * fit.imgW, y0: fit.offY + r.y / screenH * fit.imgH, y1: fit.offY + (r.y + r.h) / screenH * fit.imgH };
+    const shift = { x0: o.x0 - n.x0, x1: o.x1 - n.x1, y0: o.y0 - n.y0, y1: o.y1 - n.y1 };
+    const NAMES = { x0: 'left', x1: 'right', y0: 'top', y1: 'bottom' };
+    const flags = Object.keys(shift).filter(e => Math.abs(shift[e]) >= 1 - 1e-9).map(e => ({ edge: NAMES[e], shift: shift[e] }));
+    const maxShift = Math.max(...Object.values(shift).map(Math.abs));
+    return { name: r.name, kind: r.kind, native: n, out: o, w: o.x1 - o.x0, h: o.y1 - o.y0, shift, maxShift, flags, moved: flags.length > 0 };
+  });
+}

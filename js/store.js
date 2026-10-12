@@ -25,7 +25,7 @@ export function defaultView() {
   return { center: true, centerLines: true, thirds: true, grid: true, segments: true, segGuides: true, boxes: true, labels: true, snap: true };
 }
 export function makeScreen(name, w, h, segments = 1) {
-  return { id: uid('scr'), name, w, h, segments, segMode: 'equal', segs: [], physUnit: 'ft', pptCur: null, x: 0, y: 0, grid: { mode: 'off', cols: 4, rows: 4, step: 256, panelW: 500, panelH: 500 }, boxes: [] };
+  return { id: uid('scr'), name, w, h, segments, segMode: 'equal', segs: [], physUnit: 'ft', pptCur: null, pptOut: null, x: 0, y: 0, grid: { mode: 'off', cols: 4, rows: 4, step: 256, panelW: 500, panelH: 500 }, boxes: [] };
 }
 export function autoPlace(job, align = 'top') {
   let x = 0; const maxH = Math.max(...job.screens.map(s => s.h), 0);
@@ -59,7 +59,8 @@ function sanitizeSegs(s, freshIds) {
   }));
   const custom = s.segMode === 'custom' && segs.length > 0;
   const pc = s.pptCur && typeof s.pptCur === 'object' && pos(s.pptCur.w) && pos(s.pptCur.h) ? { w: pos(s.pptCur.w), h: pos(s.pptCur.h), unit: s.pptCur.unit === 'cm' ? 'cm' : 'in' } : null;
-  return { segments: custom ? segs.length : Math.round(num(s.segments, 1, 1, 256)), segMode: custom ? 'custom' : 'equal', segs, physUnit: s.physUnit === 'm' ? 'm' : 'ft', pptCur: pc };
+  const po = s.pptOut && typeof s.pptOut === 'object' && pos(s.pptOut.w) && pos(s.pptOut.h) ? { w: Math.min(65536, Math.max(1, Math.round(s.pptOut.w))), h: Math.min(65536, Math.max(1, Math.round(s.pptOut.h))) } : null;
+  return { pptOut: po, segments: custom ? segs.length : Math.round(num(s.segments, 1, 1, 256)), segMode: custom ? 'custom' : 'equal', segs, physUnit: s.physUnit === 'm' ? 'm' : 'ft', pptCur: pc };
 }
 const num = (v, d, min = -1e7, max = 1e7) => { v = +v; return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : d; };
 const str = (v, d) => (typeof v === 'string' && v.trim() ? v.slice(0, 120) : d);
