@@ -257,7 +257,9 @@ function panelScreen() {
     <div class="grid2">${numInput('scr.w', s.w, 'Width px', 'min="1"')}${numInput('scr.h', s.h, 'Height px', 'min="1"')}</div>
     ${gl ? `<div class="lbl mt">GLOBAL CANVAS OFFSET</div><div class="grid2">${numInput('scr.x', s.x, 'Offset X')}${numInput('scr.y', s.y, 'Offset Y')}</div>` : ''}
   </div>
+  ${fillsCard(s)}
   ${segEditor(s)}
+  ${layersCard()}
   <div class="card"><div class="lbl">CUSTOM GRID</div>
     <div class="seg full wrap">${[['off', 'Off'], ['nm', 'N × M'], ['px', 'Every X px'], ['led192', 'LED 192×192'], ['led384', 'Double LED 192×384'], ['panel', 'Custom panel']].map(([k, l]) => `<button class="${g.mode === k ? 'on' : ''}" data-act="gridMode" data-m="${k}">${l}</button>`).join('')}</div>
     ${g.mode === 'panel' ? `<div class="grid2">${numInput('grid.panelW', g.panelW, 'Panel W px', 'min="1"')}${numInput('grid.panelH', g.panelH, 'Panel H px', 'min="1"')}</div>
@@ -270,6 +272,44 @@ function panelScreen() {
   <button class="btn sm" data-act="dupScreen">Duplicate</button><button class="btn sm danger" data-act="delScreen">Delete screen</button></div>
   <div class="row wrap"><button class="btn sm" data-act="openSlideDlg" data-k="dup">⧉ Duplicate from slide size…</button><button class="btn sm" data-act="openSlideDlg" data-k="resize">⤢ Resize from slide size…</button></div>`;
 }
+
+// ---------- v1.9: color fills (screen + segments) and job layers ----------
+const FILL_DEFAULT = '#00e5ff';
+const fillPick = (bind, val, label) => `<div class="fld fillpick ${val ? 'has' : 'none'}"><span>${esc(label)}</span><div class="fp-row">
+  <input type="color" class="inp color" data-bind="${bind}" value="${val || FILL_DEFAULT}" aria-label="${esc(label)} fill color" title="${val ? val : 'No fill — pick a color'}">
+  <button type="button" class="btn sm ghost fp-none" data-act="clearFill" data-k="${bind}" ${val ? '' : 'disabled'} aria-label="No fill for ${esc(label)}">${val ? '✕' : 'none'}</button></div></div>`;
+function fillsCard(s) {
+  const custom = G.isCustomSegs(s), src = custom ? (G.isFill(s) ? s.segmentsOriginal : s.segs) : null, n = G.hasSegs(s) ? G.segCount(s) : 0;
+  const L = G.normLayers(job().layers).find(l => l.id === 'fill');
+  let segPicks = '';
+  if (custom) segPicks = src.map((g, i) => fillPick(`seg.${i}.fill`, g.fill, g.name)).join('');
+  else if (n > 1) segPicks = Array.from({ length: Math.min(n, 64) }, (_, i) => fillPick(`segfill.${i}`, (s.segFills || [])[i], `Seg ${i + 1}`)).join('');
+  return `<div class="card fills"><div class="row between"><div class="lbl">COLOR FILLS · ${esc(s.name.toUpperCase())}</div>${job().exportSettings.inc.fill ? '' : '<span class="warnc sm">off in PNG export</span>'}</div>
+    <div class="fill-grid">${fillPick('scr.fill', s.fill, 'Screen')}${segPicks}</div>
+    <p class="hint">See-through background fills, drawn by the <b>Color fills</b> layer at ${Math.round(L.opacity * 100)}% opacity${L.on ? '' : ' (layer hidden)'} — set the order and opacity in Layers. A segment's color replaces the screen color in its area. None until you pick a color.</p></div>`;
+}
+function layersCard() {
+  const L = G.normLayers(job().layers), rows = L.map((l, i) => ({ l, i })).reverse();   // listed top → bottom
+  return `<div class="card layers"><div class="row between"><div class="lbl">LAYERS · JOB</div><button class="btn sm ghost" data-act="layerReset">Reset</button></div>
+    <ol class="lay-list">${rows.map(({ l, i }) => `<li class="lay-row ${l.on ? '' : 'off'}" draggable="true" data-id="${l.id}">
+      <span class="lay-grip" aria-hidden="true">⠿</span>
+      <button type="button" class="btn sm ghost lay-eye" data-act="layerOn" data-id="${l.id}" aria-pressed="${l.on}" title="${l.on ? 'Hide' : 'Show'} ${G.LAYER_NAMES[l.id]}">${l.on ? '◉' : '○'}</button>
+      <span class="lay-name">${G.LAYER_NAMES[l.id]}</span>
+      <label class="lay-op"><input type="range" min="0" max="100" step="1" data-bind="layer.${l.id}.opacity" value="${Math.round(l.opacity * 100)}" aria-label="${G.LAYER_NAMES[l.id]} opacity"><output>${Math.round(l.opacity * 100)}%</output></label>
+      <button type="button" class="btn sm ghost" data-act="layerMove" data-id="${l.id}" data-d="1" ${i === L.length - 1 ? 'disabled' : ''} aria-label="Move ${G.LAYER_NAMES[l.id]} up">↑</button>
+      <button type="button" class="btn sm ghost" data-act="layerMove" data-id="${l.id}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move ${G.LAYER_NAMES[l.id]} down">↓</button></li>`).join('')}</ol>
+    <p class="hint">Top of the list is drawn last (on top). Drag rows or use ↑ / ↓. Applies to the canvas and PNG export for every screen in this job. Guides (outline, center, thirds) sit underneath; screen labels stay on top.</p></div>`;
+}
+function moveLayer(id, toId) {
+  const L = G.normLayers(job().layers), a = L.findIndex(l => l.id === id), b = L.findIndex(l => l.id === toId);
+  if (a < 0 || b < 0 || a === b) return;
+  const [x] = L.splice(a, 1); L.splice(b, 0, x); job().layers = L; commit();
+}
+// drag to reorder (mouse / trackpad / pen; touch uses ↑ ↓)
+document.addEventListener('dragstart', e => { const r = e.target.closest && e.target.closest('.lay-row'); if (!r) return; e.dataTransfer.setData('text/plain', r.dataset.id); e.dataTransfer.effectAllowed = 'move'; r.classList.add('dragging'); });
+document.addEventListener('dragend', e => { const r = e.target.closest && e.target.closest('.lay-row'); if (r) r.classList.remove('dragging'); });
+document.addEventListener('dragover', e => { const r = e.target.closest && e.target.closest('.lay-row'); if (r) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } });
+document.addEventListener('drop', e => { const r = e.target.closest && e.target.closest('.lay-row'); if (!r) return; e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) moveLayer(id, r.dataset.id); });
 
 // ---------- v1.7: segment layout Original ↔ Fill width ----------
 // Rule while Fill is active: the ORIGINAL layout is what you edit. Name, physical size, Y and height edits apply to both layouts;
@@ -559,13 +599,14 @@ function slideSummaryText(s) {
   return L.join('\n');
 }
 
-const EXP_ITEMS = [['bg', 'Background'], ['outline', 'Outline / border'], ['crosshair', 'Center crosshair'], ['centerLines', 'Center lines'], ['thirds', 'Thirds'], ['grid', 'Custom / panel grid'],
+const EXP_ITEMS = [['fill', 'Color fills (screen / segment colors)'], ['bg', 'Background'], ['outline', 'Outline / border'], ['crosshair', 'Center crosshair'], ['centerLines', 'Center lines'], ['thirds', 'Thirds'], ['grid', 'Custom / panel grid'],
   ['segDividers', 'Segment dividers'], ['segCenters', 'Segment centers'], ['segGuides', 'Segment guides (center/thirds)'], ['boxes', 'PiP boxes'], ['labels', 'Labels (name + resolution)'], ['coordLabels', 'Coordinate labels'], ['panelLabels', 'Panel numbers (C# R#)'], ['unused', 'Unused / overlap areas (hatched, if segments don\'t fill)']];
 function panelExport() {
   const ex = job().exportSettings, s = scr();
   const color = (k, l) => `<label class="fld cpick"><span>${l}</span><input type="color" class="inp color" data-bind="ex.${k}" value="${ex[k]}"></label>`;
   return `<div class="card"><div class="lbl">INCLUDE</div><div class="checks">${EXP_ITEMS.map(([k, l]) => `<label class="tgl"><input type="checkbox" data-bind="exinc.${k}" ${ex.inc[k] ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>
     ${!ex.inc.bg ? '<p class="hint">Background off → transparent PNG.</p>' : ''}</div>
+    ${fillsCard(s)}${layersCard()}
     <div class="card"><div class="lbl">STYLE</div><div class="grid3">${color('bg', 'Background')}${color('line', 'Lines / guides')}${color('seg', 'Segments')}${color('box', 'PiP boxes')}${color('text', 'Text')}</div>
     <label class="tgl"><input type="checkbox" data-bind="ex.boxOwnColors" ${ex.boxOwnColors ? 'checked' : ''}><span>Use each box's own color</span></label>
     <div class="grid2">${numInput('ex.lw', ex.lw, 'Line width px', 'min="1" max="64"')}${numInput('ex.textSize', ex.textSize, 'Text size px (0 = auto)', 'min="0"')}</div>
@@ -614,7 +655,8 @@ function drawStage() {
     u, lw: 1.1, glow: true, colors: PREVIEW_COLORS, origin: G.originOf(s, j.origin), boxOwnColors: true, fs: 11 * u, selectedId: ui.sel, snapLines: ui.snapLines,
     handles: true, handleR: 9, probe: ui.drag ? null : ui.probe,
     inc: { bg: true, outline: true, crosshair: v.center, centerLines: v.centerLines, thirds: v.thirds, grid: v.grid, segDividers: v.segments && segs,
-      segCenters: v.segments && segs && v.center, segGuides: v.segGuides && segs, boxes: v.boxes, labels: lbl, coordLabels: lbl, panelLabels: lbl && v.grid && j.exportSettings.inc.panelLabels, unused: true },
+      segCenters: v.segments && segs && v.center, segGuides: v.segGuides && segs, boxes: v.boxes, labels: lbl, coordLabels: lbl, panelLabels: lbl && v.grid && j.exportSettings.inc.panelLabels, unused: true, fill: true },
+    layers: j.layers,
   });
   renderFitBadge(s);
 }
@@ -795,7 +837,7 @@ async function doExport(screens) {
   for (const s of screens) {
     if (s.w * s.h > 16777216) toast(`⚠ ${s.name} is ${s.w}×${s.h} — may exceed iOS canvas limit (16.7 MP)`);
     try {
-      const blob = await screenToBlob(s, ex, job().origin);
+      const blob = await screenToBlob(s, { ...ex, layers: job().layers }, job().origin);
       const file = new File([blob], `${fileSafe(job().name)}_${fileSafe(s.name)}_${s.w}x${s.h}.png`, { type: 'image/png' });
       ui.exportFiles.push({ file, url: URL.createObjectURL(blob), w: s.w, h: s.h });
     } catch (e) { toast(`${s.name}: ${e.message}`); }
@@ -1072,6 +1114,16 @@ const ACTIONS = {
   delBox: () => delBox(),
   gridMode: el => { scr().grid.mode = el.dataset.m; if (el.dataset.m !== 'off') { job().view.grid = true; job().exportSettings.inc.grid = true; } commit(); },
   panelPreset: el => { const [w, h] = el.dataset.p.split('x').map(Number); Object.assign(scr().grid, { mode: 'panel', panelW: w, panelH: h }); commit(); },
+  clearFill: el => {
+    const s = scr(), [ns, a, b] = el.dataset.k.split('.');
+    if (ns === 'scr') s.fill = null;
+    else if (ns === 'segfill') { if (s.segFills) s.segFills[+a] = null; }
+    else if (ns === 'seg') { const src = G.isFill(s) ? s.segmentsOriginal : s.segs; if (src[+a]) src[+a].fill = null; if (G.isFill(s) && s.segs[+a]) s.segs[+a].fill = null; }
+    commit();
+  },
+  layerOn: el => { const L = G.normLayers(job().layers), l = L.find(x => x.id === el.dataset.id); if (l) { l.on = !l.on; job().layers = L; commit(); } },
+  layerMove: el => { const L = G.normLayers(job().layers), i = L.findIndex(x => x.id === el.dataset.id), k = i + +el.dataset.d; if (i < 0 || k < 0 || k >= L.length) return; [L[i], L[k]] = [L[k], L[i]]; job().layers = L; commit(); },
+  layerReset: () => { job().layers = G.defaultLayers(); commit(); },
   segLayout: el => {
     const s = scr(); if (!G.isCustomSegs(s)) return;
     if (el.dataset.m === 'fill' && !G.isFill(s)) { s.segmentsOriginal = JSON.parse(JSON.stringify(s.segs)); s.segs = G.fillSegs(s.segmentsOriginal, s.w); s.segLayout = 'fill'; toast(`Fill width: ${s.segs.map(g => g.w).join(' + ')} = ${s.w}`); }
@@ -1087,7 +1139,7 @@ const ACTIONS = {
     const s = scr();
     if (el.dataset.m !== 'custom' && G.isFill(s)) { s.segs = s.segmentsOriginal; s.segmentsOriginal = null; s.segLayout = 'original'; }
     if (el.dataset.m === 'custom') {
-      if (!s.segs || !s.segs.length) s.segs = G.splitEqualInt(s.w, s.h, G.segCount(s)).map(g => ({ id: Store.uid('seg'), ...g, pw: null, ph: null }));
+      if (!s.segs || !s.segs.length) s.segs = G.splitEqualInt(s.w, s.h, G.segCount(s)).map((g, i) => ({ id: Store.uid('seg'), ...g, pw: null, ph: null, fill: (s.segFills || [])[i] || null }));
       s.segMode = 'custom';
     } else s.segMode = 'equal';
     s.segments = G.segCount(s); commit();
@@ -1136,7 +1188,7 @@ const ACTIONS = {
     const c = G.resizeScreen(s, o.wholeW, o.wholeH, 'scale'), ex = job().exportSettings;
     const ex2 = { ...ex, inc: { ...ex.inc, bg: true, outline: true, segDividers: true, labels: true, coordLabels: true, boxes: true, unused: true } };
     try {
-      const blob = await screenToBlob(c, ex2, 'tl');
+      const blob = await screenToBlob(c, { ...ex2, layers: job().layers }, 'tl');
       const f = new File([blob], `${fileSafe(job().name)}_${fileSafe(s.name)}_Keynote_${o.wholeW}x${o.wholeH}_guide.png`, { type: 'image/png' });
       ui.lastKeyPng = f; await shareOrDownload([f]);
     } catch (e) { toast('Guide PNG failed: ' + e.message); }
@@ -1200,6 +1252,7 @@ document.addEventListener('change', e => {
     const [, i, fk] = key.split('.'), fill = G.isFill(s), src = fill ? s.segmentsOriginal : s.segs, g = src && src[+i]; if (!g) return;
     const both = fill ? [g, s.segs[+i]] : [g];   // fill mode: name / physical / Y / H go to both layouts, W / X to the original
     if (fk === 'name') { const nm = v.trim() || g.name; both.forEach(x => x.name = nm); }
+    else if (fk === 'fill') both.forEach(x => x.fill = /^#[0-9a-f]{6}$/i.test(v) ? v : null);
     else if (fk === 'pw' || fk === 'ph') both.forEach(x => x[fk] = v === '' || !(n > 0) ? null : n);
     else {
       const x = int(n, fk === 'w' || fk === 'h' ? 1 : -65536, fk === 'w' || fk === 'h' ? 65536 : 131072); if (x == null || v === '') return render(['panel']);
@@ -1224,8 +1277,11 @@ document.addEventListener('change', e => {
     s.pptCur = pc.w && pc.h ? pc : (pc.w || pc.h ? pc : null);
     return commit(['panel']);
   }
+  if (ns === 'segfill') { const i = +k; s.segFills = s.segFills || []; while (s.segFills.length <= i) s.segFills.push(null); s.segFills[i] = /^#[0-9a-f]{6}$/i.test(v) ? v : null; return commit(); }
+  if (ns === 'layer') { const [, id] = key.split('.'), L = G.normLayers(job().layers), l = L.find(x => x.id === id); if (l) { l.opacity = Math.min(1, Math.max(0, (Number.isFinite(n) ? n : 100) / 100)); job().layers = L; } return commit(['panel']); }
   if (ns === 'scr') {
     if (k === 'name') s.name = v.trim() || s.name;
+    else if (k === 'fill') s.fill = /^#[0-9a-f]{6}$/i.test(v) ? v : null;
     else if (k === 'segments') { const x = int(n, 1, 256); if (x) s.segments = x; }
     else { const x = int(n, k === 'w' || k === 'h' ? 1 : -1e7, 65536); if (x != null) s[k] = x; if (k === 'w') refill(s); }
     return commit();
@@ -1254,7 +1310,17 @@ document.addEventListener('change', e => {
   }
 });
 // live color preview while dragging the picker
-document.addEventListener('input', e => { const el = e.target; if (el.dataset.bind === 'box.color' && box()) { box().color = el.value; drawStage(); } });
+document.addEventListener('input', e => {
+  const el = e.target, key = el.dataset.bind || '';
+  if (key === 'box.color' && box()) { box().color = el.value; drawStage(); }
+  if (key.startsWith('layer.')) { const id = key.split('.')[1], L = G.normLayers(job().layers), l = L.find(x => x.id === id); if (l) { l.opacity = Math.min(1, Math.max(0, +el.value / 100)); job().layers = L; const o = el.parentElement.querySelector('output'); if (o) o.textContent = `${el.value}%`; drawStage(); } }
+  if (key === 'scr.fill' || key.startsWith('segfill.') || /^seg\.\d+\.fill$/.test(key)) {   // live color preview while dragging the picker
+    const s = scr(), [ns, a] = key.split('.');
+    if (ns === 'scr') s.fill = el.value; else if (ns === 'segfill') { s.segFills = s.segFills || []; s.segFills[+a] = el.value; }
+    else { const src = G.isFill(s) ? s.segmentsOriginal : s.segs; if (src[+a]) src[+a].fill = el.value; if (G.isFill(s) && s.segs[+a]) s.segs[+a].fill = el.value; }
+    drawStage();
+  }
+});
 
 new ResizeObserver(() => drawStage()).observe(wrap);
 if (syncConfigured) { renderSync(); sync.init(); authLinkError(); }

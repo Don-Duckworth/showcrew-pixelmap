@@ -1,4 +1,5 @@
 // ShowCrew PixelMap — persistence (localStorage) + data model helpers.
+import { normLayers, defaultLayers } from './geometry.js';
 const KEY = 'showcrew.pixelmap.v1';
 
 export const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
@@ -16,7 +17,7 @@ export const BOX_COLORS = ['#ff3df2', '#00e5ff', '#ffb020', '#14f1c6', '#8b7bff'
 export function defaultExport() {
   return {
     inc: { bg: true, outline: true, crosshair: true, centerLines: true, thirds: true, grid: false, segDividers: true,
-      segCenters: true, segGuides: false, boxes: true, labels: true, coordLabels: true, panelLabels: false, unused: true },
+      segCenters: true, segGuides: false, boxes: true, labels: true, coordLabels: true, panelLabels: false, unused: true, fill: true },
     bg: '#0b1220', line: '#00e5ff', seg: '#ffb020', box: '#ff3df2', text: '#ffffff',
     lw: 2, textSize: 0, boxOwnColors: true,
   };
@@ -25,7 +26,7 @@ export function defaultView() {
   return { center: true, centerLines: true, thirds: true, grid: true, segments: true, segGuides: true, boxes: true, labels: true, snap: true };
 }
 export function makeScreen(name, w, h, segments = 1) {
-  return { id: uid('scr'), name, w, h, segments, segMode: 'equal', segs: [], physUnit: 'ft', pptCur: null, pptOut: null, segLayout: 'original', segmentsOriginal: null, keyCur: null, x: 0, y: 0, grid: { mode: 'off', cols: 4, rows: 4, step: 256, panelW: 500, panelH: 500 }, boxes: [] };
+  return { id: uid('scr'), name, w, h, segments, segMode: 'equal', segs: [], physUnit: 'ft', fill: null, segFills: [], pptCur: null, pptOut: null, segLayout: 'original', segmentsOriginal: null, keyCur: null, x: 0, y: 0, grid: { mode: 'off', cols: 4, rows: 4, step: 256, panelW: 500, panelH: 500 }, boxes: [] };
 }
 export function autoPlace(job, align = 'top') {
   let x = 0; const maxH = Math.max(...job.screens.map(s => s.h), 0);
@@ -47,12 +48,12 @@ export function exampleJob() {
 }
 export function emptyJob(name) {
   const s = makeScreen('Screen 1', 1920, 1080);
-  return { id: newJobId(), name, mode: 'screen', origin: 'tl', created: Date.now(), updated: Date.now(), screens: [s], currentScreenId: s.id, view: defaultView(), exportSettings: defaultExport() };
+  return { id: newJobId(), name, mode: 'screen', origin: 'tl', created: Date.now(), updated: Date.now(), screens: [s], currentScreenId: s.id, view: defaultView(), exportSettings: defaultExport(), layers: defaultLayers() };
 }
 function sanitizeSegs(s, freshIds) {
   const H = Math.round(num(s.h, 1080, 1, 65536)), pos = v => (Number.isFinite(+v) && +v > 0 ? Math.min(1e5, +v) : null);
   const segsOf = arr => (Array.isArray(arr) ? arr : []).slice(0, 256).map((g, k) => ({
-    id: freshIds || !g.id ? uid('seg') : String(g.id), name: str(g.name, `Seg ${k + 1}`),
+    id: freshIds || !g.id ? uid('seg') : String(g.id), name: str(g.name, `Seg ${k + 1}`), fill: col(g.fill, null),   // v1.9 fill color (null = none)
     x: Math.round(num(g.x, 0, -65536, 131072)), y: Math.round(num(g.y, 0, -65536, 131072)),
     w: Math.round(num(g.w, 1920, 1, 65536)), h: Math.round(num(g.h, H, 1, 65536)),
     pw: pos(g.pw), ph: pos(g.ph),   // optional physical size (physUnit) → pixel pitch
@@ -85,9 +86,11 @@ export function sanitizeJob(j, freshIds = false) {
     id: freshIds || !isUuid(j.id) ? newJobId() : j.id, name: str(j.name, 'Untitled job'), ...(j.seed && !freshIds ? { seed: true } : {}),
     mode: j.mode === 'global' ? 'global' : 'screen', origin: j.origin === 'center' ? 'center' : 'tl', created: num(j.created, Date.now()), updated: freshIds ? Date.now() : num(j.updated, Date.now()),
     view: Object.assign(defaultView(), j.view || {}), exportSettings: ex,
+    layers: normLayers(j.layers),   // v1.9 job layer order / opacity / visibility (defaults when missing)
     screens: j.screens.slice(0, 200).map((s, i) => ({
       id: freshIds || !s.id ? uid('scr') : String(s.id), name: str(s.name, `Screen ${i + 1}`),
       w: Math.round(num(s.w, 1920, 1, 65536)), h: Math.round(num(s.h, 1080, 1, 65536)),
+      fill: col(s.fill, null), segFills: (Array.isArray(s.segFills) ? s.segFills : []).slice(0, 256).map(c => col(c, null)),   // v1.9 screen + equal-split segment fills
       // v1.4: segMode 'equal' (legacy `segments: N` = N equal slices, unchanged) or 'custom' (explicit rects in `segs`).
       // `segments` always mirrors the segment count so older app versions still show the right number of slices.
       ...sanitizeSegs(s, freshIds), x: Math.round(num(s.x, 0)), y: Math.round(num(s.y, 0)),

@@ -382,3 +382,19 @@ export function fillSegs(segs, W) {
   let x = 0; order.forEach((i, k) => { out[i].x = x; out[i].w = ws[k]; x += ws[k]; });
   return out;
 }
+
+// ---------- v1.9: job layers (render order, bottom → top) ----------
+export const LAYER_IDS = ['fill', 'grid', 'segs', 'pip'];
+export const LAYER_NAMES = { fill: 'Color fills', grid: 'Grid (LED panel grid)', segs: 'Segments (outlines / labels)', pip: 'PiPs' };
+export const defaultLayers = () => [{ id: 'fill', on: true, opacity: 0.4 }, { id: 'grid', on: true, opacity: 1 }, { id: 'segs', on: true, opacity: 1 }, { id: 'pip', on: true, opacity: 1 }];
+/** Any stored value → a full, valid list: known ids once each (stored order first, missing ones appended in default order), on bool, opacity 0–1. */
+export function normLayers(v) {
+  const def = defaultLayers(), out = [], seen = new Set();
+  for (const l of Array.isArray(v) ? v : []) {
+    if (!l || !LAYER_IDS.includes(l.id) || seen.has(l.id)) continue;
+    const d = def.find(x => x.id === l.id), op = Number.isFinite(+l.opacity) && l.opacity !== null && l.opacity !== '' ? Math.min(1, Math.max(0, +l.opacity)) : d.opacity;
+    out.push({ id: l.id, on: l.on !== false, opacity: Math.round(op * 100) / 100 }); seen.add(l.id);
+  }
+  for (const d of def) if (!seen.has(d.id)) out.push(d);
+  return out;
+}

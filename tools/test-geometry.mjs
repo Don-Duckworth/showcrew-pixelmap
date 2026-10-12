@@ -28,3 +28,16 @@ const o = G.originOf(C, 'center'); assert.deepEqual([0 - o.x, 0 - o.y], [-1280, 
 assert.deepEqual(G.originOf(C, 'tl'), { x: 0, y: 0 });
 assert.equal(G.rnd(-597.33), -597); assert.equal(G.rnd(-0.5), -1); assert.equal(G.rnd(0.5), 1);
 console.log('geometry tests passed');
+
+// v1.9 layers + fills (sanitize back-compat)
+{
+  const G2 = await import('../js/geometry.js'), S2 = await import('../js/store.js');
+  const d = G2.normLayers(undefined); if (d.map(l => l.id).join() !== 'fill,grid,segs,pip' || d[0].opacity !== 0.4) throw new Error('default layers');
+  const n = G2.normLayers([{ id: 'pip', opacity: 2 }, { id: 'pip' }, { id: 'x' }, { id: 'grid', on: false, opacity: -1 }]);
+  if (n.map(l => l.id).join() !== 'pip,grid,fill,segs' || n[0].opacity !== 1 || n[1].on || n[1].opacity !== 0) throw new Error('normLayers ' + JSON.stringify(n));
+  const old = S2.sanitizeJob({ name: 'old', screens: [{ name: 'a', w: 100, h: 50, segments: 2 }] });
+  if (old.layers.length !== 4 || old.screens[0].fill !== null || old.screens[0].segFills.length || old.exportSettings.inc.fill !== true) throw new Error('back-compat defaults');
+  const j = S2.sanitizeJob({ name: 'n', screens: [{ name: 'a', w: 100, h: 50, fill: '#AbCdEf', segFills: ['#000000', 'red'], segMode: 'custom', segs: [{ x: 0, y: 0, w: 50, h: 50, fill: 'nope' }, { x: 50, y: 0, w: 50, h: 50, fill: '#ff0000' }] }] });
+  const s = j.screens[0]; if (s.fill !== '#AbCdEf' || s.segFills[1] !== null || s.segs[0].fill !== null || s.segs[1].fill !== '#ff0000') throw new Error('fill sanitize');
+  console.log('layer/fill tests passed');
+}

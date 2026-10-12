@@ -292,3 +292,23 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.
 .appver { margin-left: 7px; font: 600 10px/1 var(--mono); letter-spacing: .06em; color: var(--dim); text-shadow: none; vertical-align: 3px; opacity: .8; cursor: default; white-space: nowrap; }
 .appver:empty { display: none; }
 .appver.stale { color: var(--amber); opacity: 1; }
+
+/* v1.9 color fills + job layers */
+.fill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.fillpick .fp-row { display: flex; gap: 6px; align-items: center; }
+.fillpick .inp.color { width: 52px; min-width: 52px; height: 40px; padding: 2px; }
+.fillpick.none .inp.color { opacity: .35; background: repeating-linear-gradient(135deg, rgba(255,255,255,.12) 0 5px, transparent 5px 10px); }
+.fillpick.has .inp.color { box-shadow: 0 0 10px rgba(0, 229, 255, .25); }
+.fp-none { min-width: 44px; font-size: 12px; }
+.fillpick > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.warnc.sm { font-size: 11px; }
+.lay-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.lay-row { display: grid; grid-template-columns: 18px 40px 1fr minmax(96px, 150px) 40px 40px; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--edge); border-radius: 10px; background: rgba(0, 229, 255, .04); }
+.lay-row.off .lay-name, .lay-row.off .lay-op { opacity: .45; }
+.lay-row.dragging { opacity: .5; border-style: dashed; }
+.lay-grip { cursor: grab; color: var(--dim); text-align: center; user-select: none; }
+.lay-name { font-weight: 650; font-size: 13.5px; }
+.lay-eye { font-size: 16px; padding: 0; }
+.lay-op { display: flex; align-items: center; gap: 6px; } .lay-op input { width: 100%; accent-color: var(--cyan); } .lay-op output { font: 600 11.5px var(--mono); min-width: 36px; text-align: right; color: var(--teal); }
+.lay-row .btn.sm { min-height: 38px; padding: 0; }
+@media (max-width: 520px) { .lay-row { grid-template-columns: 16px 36px 1fr 36px 36px; } .lay-op { grid-column: 2 / -1; grid-row: 2; } }

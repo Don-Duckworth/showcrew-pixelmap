@@ -138,3 +138,10 @@ Tests: `node tools/test-segments.mjs` and `node tools/keynote-test.mjs`.
 ## Version tag (v1.8.1)
 
 The top bar shows the version next to the PIXELMAP wordmark (e.g. `v1.8.1`). Single source of truth: `VERSION` in `sw.js`. The page asks the **active** service worker (the cache this device runs) for its VERSION via `postMessage`, and also reads the live `sw.js` (never cached). If the device is behind the server the tag turns amber, e.g. `v1.8.0 → v1.8.1` (reload to switch); the tooltip shows both. With no service worker yet it shows the server version. Test: `node tools/version-test.mjs`.
+
+## v1.9 — Color fills + job layers
+- **Color fills** (Screen tab and Export tab, same pickers): a color box for each screen and each segment. Fills are see-through so the grid still shows. None until you pick a color; ✕ clears it. A segment's color replaces the screen color in its area. Stored as `screen.fill`, `segment.fill` (custom sizes; Fill-width edits apply to both layouts) and `screen.segFills[i]` (equal split; carried into custom sizes when you switch).
+- **Layers (job setting)**: Color fills < Grid < Segments < PiPs by default. Reorder by dragging or with ↑ / ↓ (touch). Each layer has show/hide and 0–100 % opacity (Color fills defaults to 40 %). Stored as `job.layers`. The canvas preview and PNG export draw in this order. Screen guides sit underneath and screen labels stay on top.
+- PNG export INCLUDE has a **Color fills** option.
+- Back-compatible: missing fields get defaults; older versions ignore the new fields.
+- Tests: `node tools/layers-test.mjs` (95 checks) plus layer/fill unit tests in `tools/test-geometry.mjs`.

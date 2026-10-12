@@ -14,6 +14,7 @@ function hexA(hex, a) {
  *      boxOwnColors, fs: font size (native px), crisp: snap lines to whole px (export), selectedId, snapLines, glow }
  */
 export function drawScreen(ctx, s, o) {
+  let vlineA, hlineA;
   const { w, h } = s, u = o.u, lw = o.lw * u, inc = o.inc, C = o.colors;
   const px = v => (o.crisp ? (Math.round(lw) % 2 === 1 ? Math.floor(v) + 0.5 : Math.round(v)) : v);
   const vline = (x, a = 1) => { ctx.globalAlpha = a; ctx.beginPath(); ctx.moveTo(px(x), 0); ctx.lineTo(px(x), h); ctx.stroke(); ctx.globalAlpha = 1; };
@@ -30,96 +31,19 @@ export function drawScreen(ctx, s, o) {
   if (inc.bg) { ctx.fillStyle = C.bg; ctx.fillRect(0, 0, w, h); }
   ctx.lineCap = 'butt'; ctx.lineWidth = lw;
   const segs = G.segments(s);
-
-  if (inc.grid) {
-    const gl = G.gridLines(s);
-    const pi = G.panelInfo(s);
-    if (pi && (pi.partialW || pi.partialH)) {
-      ctx.fillStyle = hexA(C.seg, 0.09);
-      if (pi.partialW) ctx.fillRect(w - pi.partialW, 0, pi.partialW, h);
-      if (pi.partialH) ctx.fillRect(0, h - pi.partialH, w - pi.partialW, pi.partialH);
-    }
-    if (gl && pi) { ctx.strokeStyle = C.line; ctx.setLineDash([]); ctx.lineWidth = Math.max(u, lw * 0.8); gl.xs.forEach(x => vline(x, 0.5)); gl.ys.forEach(y => hline(y, 0.5)); ctx.lineWidth = lw; }
-    else if (gl) { ctx.strokeStyle = C.line; ctx.setLineDash([]); ctx.lineWidth = Math.max(u * 0.75, lw * 0.6); gl.xs.forEach(x => vline(x, 0.32)); gl.ys.forEach(y => hline(y, 0.32)); ctx.lineWidth = lw; }
-  }
   const showSegs = G.hasSegs(s), custom = G.isCustomSegs(s);
   const fit = custom ? G.segFit(s) : null;
-  if (showSegs) {
-    if (inc.segGuides) {
-      ctx.strokeStyle = C.seg; ctx.setLineDash([lw * 2, lw * 3]);
-      const vseg = (x, y0, y1, a) => { ctx.globalAlpha = a; ctx.beginPath(); ctx.moveTo(px(x), y0); ctx.lineTo(px(x), y1); ctx.stroke(); ctx.globalAlpha = 1; };
-      const hseg = (y, x0, x1, a) => { ctx.globalAlpha = a; ctx.beginPath(); ctx.moveTo(x0, px(y)); ctx.lineTo(x1, px(y)); ctx.stroke(); ctx.globalAlpha = 1; };
-      for (const g of segs) {
-        vseg(g.cx, g.y0, g.y1, 0.55); vseg(g.thirds[0], g.y0, g.y1, 0.3); vseg(g.thirds[1], g.y0, g.y1, 0.3);
-        if (custom) hseg(g.cy, g.x0, g.x1, 0.45);
-      }
-      ctx.setLineDash([]);
-    }
-    if (inc.segDividers) {
-      ctx.strokeStyle = C.seg; glow(C.seg);
-      if (!custom) for (let i = 1; i < segs.length; i++) vline(segs[i].x0, 0.95);
-      else for (const g of segs) {   // every real segment outline (screen-edge sides are drawn too, inset so they stay visible)
-        const t = lw * 1.2; ctx.lineWidth = t; ctx.globalAlpha = 0.95;
-        ctx.strokeRect(g.x0 + t / 2, g.y0 + t / 2, g.w - t, g.h - t); ctx.globalAlpha = 1; ctx.lineWidth = lw;
-      }
-      noGlow();
-    }
-    if (inc.segCenters) {
-      ctx.strokeStyle = C.seg; const r = Math.min(...segs.map(g => Math.min(g.w, g.h))) * 0.12;
-      for (const g of segs) cross(g.cx, g.cy, Math.max(r, 6 * u), true);
-    }
-  }
-  if (inc.thirds) {
-    ctx.strokeStyle = C.line; ctx.setLineDash([lw * 6, lw * 4]);
-    vline(w / 3, 0.6); vline(2 * w / 3, 0.6); hline(h / 3, 0.6); hline(2 * h / 3, 0.6); ctx.setLineDash([]);
-  }
-  if (inc.centerLines) { ctx.strokeStyle = C.line; glow(C.line); vline(w / 2, 0.9); hline(h / 2, 0.9); noGlow(); }
-  if (inc.crosshair) {
-    ctx.strokeStyle = C.line; ctx.lineWidth = lw * 1.5; glow(C.line);
-    cross(w / 2, h / 2, Math.max(Math.min(w, h) * 0.06, 10 * u), true); noGlow(); ctx.lineWidth = lw;
-  }
-  if (inc.outline) { ctx.strokeStyle = C.line; ctx.lineWidth = lw * 2; ctx.strokeRect(lw, lw, w - lw * 2, h - lw * 2); ctx.lineWidth = lw; }
+  // v1.9: layer alpha (job layer opacity) multiplies every alpha drawn inside a layer
+  let LA = 1;
+  const A = a => { ctx.globalAlpha = a * LA; };
+  vlineA = (x, a = 1) => { A(a); ctx.beginPath(); ctx.moveTo(px(x), 0); ctx.lineTo(px(x), h); ctx.stroke(); A(1); };
+  hlineA = (y, a = 1) => { A(a); ctx.beginPath(); ctx.moveTo(0, px(y)); ctx.lineTo(w, px(y)); ctx.stroke(); A(1); };
+  const vl = (x, a) => vlineA(x, a), hl = (y, a) => hlineA(y, a);
 
-  // v1.4 (drawn over the outline so a thin edge gap stays visible): unused (amber hatch) / overlapping (red) / past-the-edge (red edge bar) areas when custom segments don't fill the screen
-  if (fit && !fit.exact && inc.unused) {
-    const step = Math.max(8 * u, Math.min(w, h) / 40);
-    for (const r of fit.unused) {
-      ctx.save(); ctx.beginPath(); ctx.rect(r.x0, r.y0, r.w, r.h); ctx.clip();
-      ctx.fillStyle = hexA(C.seg, 0.22); ctx.fillRect(r.x0, r.y0, r.w, r.h);
-      ctx.strokeStyle = hexA(C.seg, 0.85); ctx.lineWidth = Math.max(u, lw * 0.9); ctx.beginPath();
-      for (let d = -r.h; d < r.w + r.h; d += step) { ctx.moveTo(r.x0 + d, r.y0); ctx.lineTo(r.x0 + d + r.h, r.y0 + r.h); }
-      ctx.stroke(); ctx.restore();
-      // tiny gaps (e.g. 4 px on an 11k screen) would be invisible: add an outward marker so it can be found
-      if (r.w < 6 * u || r.h < 6 * u) {
-        ctx.save(); ctx.strokeStyle = C.seg; ctx.lineWidth = Math.max(2 * u, lw * 1.5); glow(C.seg);
-        if (r.w < 6 * u) { const x = r.x0 + r.w / 2; ctx.beginPath(); ctx.moveTo(x, r.y0); ctx.lineTo(x, r.y1); ctx.stroke(); }
-        if (r.h < 6 * u) { const y = r.y0 + r.h / 2; ctx.beginPath(); ctx.moveTo(r.x0, y); ctx.lineTo(r.x1, y); ctx.stroke(); }
-        noGlow(); ctx.restore();
-      }
-    }
-    ctx.fillStyle = 'rgba(255,60,80,0.35)';
-    for (const r of fit.overlaps) ctx.fillRect(r.x0, r.y0, Math.max(r.w, 3 * u), r.h);
-    ctx.fillStyle = '#ff3c50';
-    for (const o of fit.outside) {
-      const g = o.seg, bw = Math.max(4 * u, lw * 2), y0 = Math.max(0, g.y0), y1 = Math.min(h, g.y1), x0 = Math.max(0, g.x0), x1 = Math.min(w, g.x1);
-      if (o.R) ctx.fillRect(w - bw, y0, bw, y1 - y0); if (o.L) ctx.fillRect(0, y0, bw, y1 - y0);
-      if (o.B) ctx.fillRect(x0, h - bw, x1 - x0, bw); if (o.T) ctx.fillRect(x0, 0, x1 - x0, bw);
-    }
-  }
-  // PiP boxes
-  if (inc.boxes) {
-    for (const b of s.boxes || []) {
-      const c = o.boxOwnColors ? b.color : C.box;
-      ctx.fillStyle = hexA(c, 0.16); ctx.fillRect(b.x, b.y, b.w, b.h);
-      ctx.strokeStyle = c; ctx.lineWidth = lw * (b.id === o.selectedId ? 2 : 1.4); glow(c);
-      ctx.strokeRect(b.x + ctx.lineWidth / 2, b.y + ctx.lineWidth / 2, b.w - ctx.lineWidth, b.h - ctx.lineWidth); noGlow();
-      ctx.lineWidth = lw; cross(b.x + b.w / 2, b.y + b.h / 2, Math.max(Math.min(b.w, b.h) * 0.06, 6 * u), false);
-    }
-  }
-
-  // Text
+  // Text helper (dry = measure layout only)
   const fs = o.fs;
   const text = (t, x, y, opt = {}) => {
+    if (opt.dry) return;
     ctx.font = `${opt.bold ? '700 ' : '500 '}${opt.fs || fs}px ${MONO}`;
     const tw = ctx.measureText(t).width, f = opt.fs || fs, pad = f * 0.35;
     let tx = opt.align === 'center' ? x - tw / 2 : opt.align === 'right' ? x - tw : x;
@@ -133,17 +57,162 @@ export function drawScreen(ctx, s, o) {
   const org = o.origin || { x: 0, y: 0 }, centered = org.x !== 0 || org.y !== 0;
   const X = v => F(v - org.x), Y = v => F(v - org.y);
   const pinfo = inc.grid ? G.panelInfo(s) : null;
-  // Panel numbers (C# R#) drawn from the top-left origin
-  if (pinfo && inc.panelLabels && pinfo.total <= 4000) {
-    const pf = Math.min(fs * 0.75, pinfo.pw * 0.16, pinfo.ph * 0.2);
-    if (pf >= 7 * u) for (let r = 0; r < pinfo.rows; r++) for (let c = 0; c < pinfo.cols; c++) {
-      // centered in the visible part of each panel (keeps corners free for coordinate labels)
-      const x0 = c * pinfo.pw, y0 = r * pinfo.ph, vw = Math.min(pinfo.pw, w - x0), vh = Math.min(pinfo.ph, h - y0), t = `C${c + 1} R${r + 1}`;
-      ctx.font = `600 ${pf}px ${MONO}`; const tw = ctx.measureText(t).width; if (tw > vw * 0.95 || vh < pf * 1.4) continue;
-      ctx.globalAlpha = 0.6; ctx.fillStyle = C.text; ctx.fillText(t, x0 + (vw - tw) / 2, y0 + vh / 2 + pf * 0.35); ctx.globalAlpha = 1;
+  // screen label block (name, segment summary…) — measured first so segment labels can sit below it, drawn last (on top)
+  const screenLabels = dry => {
+    let ly = fs * 2.75;
+    if (inc.labels) {
+      text(`${s.name}  ${w}×${h}`, fs * 0.6, ly, { bold: true, fs: fs * 1.25, dry }); ly += fs * 1.4;
+      if (showSegs && !custom) { text(`${segs.length} segments × ${F(segs[0].w)}×${h}`, fs * 0.6, ly, { color: C.seg, dry }); ly += fs * 1.3; }
+      if (custom) { text(`${segs.length} segment${segs.length > 1 ? 's' : ''}: ${segs.map(g => `${F(g.w)}×${F(g.h)}`).join(' + ')}`, fs * 0.6, ly, { color: C.seg, dry }); ly += fs * 1.3; }
+      if (fit && !fit.exact && inc.unused) { text(`⚠ Segments don't fill the screen: ${fit.badge}`, fs * 0.6, ly, { color: fit.level === 'error' ? '#ff6b7a' : C.seg, bold: true, dry }); ly += fs * 1.3; }
+      if (pinfo) { text(`Panels ${pinfo.pw}×${pinfo.ph}: ${pinfo.countText}${pinfo.whole ? '' : ` (${pinfo.exactText})`}`, fs * 0.6, ly, { color: C.text, fs: fs * 0.85, dry }); ly += fs * 1.2; }
+      if (centered) { text('Origin 0,0 = center · Y down', fs * 0.6, ly, { fs: fs * 0.8, color: C.line, dry }); ly += fs * 1.2; }
     }
+    return ly;
+  };
+  const ly = screenLabels(true);
+
+  // Screen guides (under the layers)
+  if (inc.thirds) {
+    ctx.strokeStyle = C.line; ctx.setLineDash([lw * 6, lw * 4]);
+    vl(w / 3, 0.6); vl(2 * w / 3, 0.6); hl(h / 3, 0.6); hl(2 * h / 3, 0.6); ctx.setLineDash([]);
   }
-  // Corner labels: origin is unmistakably at the top-left (or center), W,H at bottom-right
+  if (inc.centerLines) { ctx.strokeStyle = C.line; glow(C.line); vl(w / 2, 0.9); hl(h / 2, 0.9); noGlow(); }
+  if (inc.crosshair) {
+    ctx.strokeStyle = C.line; ctx.lineWidth = lw * 1.5; glow(C.line);
+    cross(w / 2, h / 2, Math.max(Math.min(w, h) * 0.06, 10 * u), true); noGlow(); ctx.lineWidth = lw;
+  }
+  if (inc.outline) { ctx.strokeStyle = C.line; ctx.lineWidth = lw * 2; ctx.strokeRect(lw, lw, w - lw * 2, h - lw * 2); ctx.lineWidth = lw; }
+
+  const LAYER = {
+    // Color fills: screen fill, then each segment's own fill (a colored segment replaces the screen fill in its area)
+    fill() {
+      if (!inc.fill) return;
+      const segFill = g => (custom ? (s.segs[g.i] || {}).fill : (s.segFills || [])[g.i]) || null, colored = segs.filter(segFill);
+      if (s.fill) {
+        ctx.fillStyle = s.fill; ctx.beginPath(); ctx.rect(0, 0, w, h);
+        for (const g of colored) ctx.rect(g.x0, g.y0, g.w, g.h);
+        ctx.fill('evenodd');
+      }
+      for (const g of colored) { ctx.fillStyle = segFill(g); ctx.fillRect(g.x0, g.y0, g.w, g.h); }
+    },
+    grid() {
+      if (!inc.grid) return;
+      const gl = G.gridLines(s);
+      const pi = G.panelInfo(s);
+      if (pi && (pi.partialW || pi.partialH)) {
+        ctx.fillStyle = hexA(C.seg, 0.09);
+        if (pi.partialW) ctx.fillRect(w - pi.partialW, 0, pi.partialW, h);
+        if (pi.partialH) ctx.fillRect(0, h - pi.partialH, w - pi.partialW, pi.partialH);
+      }
+      if (gl && pi) { ctx.strokeStyle = C.line; ctx.setLineDash([]); ctx.lineWidth = Math.max(u, lw * 0.8); gl.xs.forEach(x => vl(x, 0.5)); gl.ys.forEach(y => hl(y, 0.5)); ctx.lineWidth = lw; }
+      else if (gl) { ctx.strokeStyle = C.line; ctx.setLineDash([]); ctx.lineWidth = Math.max(u * 0.75, lw * 0.6); gl.xs.forEach(x => vl(x, 0.32)); gl.ys.forEach(y => hl(y, 0.32)); ctx.lineWidth = lw; }
+      // Panel numbers (C# R#) drawn from the top-left origin
+      if (pinfo && inc.panelLabels && pinfo.total <= 4000) {
+        const pf = Math.min(fs * 0.75, pinfo.pw * 0.16, pinfo.ph * 0.2);
+        if (pf >= 7 * u) for (let r = 0; r < pinfo.rows; r++) for (let c = 0; c < pinfo.cols; c++) {
+          // centered in the visible part of each panel (keeps corners free for coordinate labels)
+          const x0 = c * pinfo.pw, y0 = r * pinfo.ph, vw = Math.min(pinfo.pw, w - x0), vh = Math.min(pinfo.ph, h - y0), t = `C${c + 1} R${r + 1}`;
+          ctx.font = `600 ${pf}px ${MONO}`; const tw = ctx.measureText(t).width; if (tw > vw * 0.95 || vh < pf * 1.4) continue;
+          A(0.6); ctx.fillStyle = C.text; ctx.fillText(t, x0 + (vw - tw) / 2, y0 + vh / 2 + pf * 0.35); A(1);
+        }
+      }
+    },
+    segs() {
+      if (showSegs) {
+        if (inc.segGuides) {
+          ctx.strokeStyle = C.seg; ctx.setLineDash([lw * 2, lw * 3]);
+          const vseg = (x, y0, y1, a) => { A(a); ctx.beginPath(); ctx.moveTo(px(x), y0); ctx.lineTo(px(x), y1); ctx.stroke(); A(1); };
+          const hseg = (y, x0, x1, a) => { A(a); ctx.beginPath(); ctx.moveTo(x0, px(y)); ctx.lineTo(x1, px(y)); ctx.stroke(); A(1); };
+          for (const g of segs) {
+            vseg(g.cx, g.y0, g.y1, 0.55); vseg(g.thirds[0], g.y0, g.y1, 0.3); vseg(g.thirds[1], g.y0, g.y1, 0.3);
+            if (custom) hseg(g.cy, g.x0, g.x1, 0.45);
+          }
+          ctx.setLineDash([]);
+        }
+        if (inc.segDividers) {
+          ctx.strokeStyle = C.seg; glow(C.seg);
+          if (!custom) for (let i = 1; i < segs.length; i++) vl(segs[i].x0, 0.95);
+          else for (const g of segs) {   // every real segment outline (screen-edge sides are drawn too, inset so they stay visible)
+            const t = lw * 1.2; ctx.lineWidth = t; A(0.95);
+            ctx.strokeRect(g.x0 + t / 2, g.y0 + t / 2, g.w - t, g.h - t); A(1); ctx.lineWidth = lw;
+          }
+          noGlow();
+        }
+        if (inc.segCenters) {
+          ctx.strokeStyle = C.seg; const r = Math.min(...segs.map(g => Math.min(g.w, g.h))) * 0.12;
+          for (const g of segs) cross(g.cx, g.cy, Math.max(r, 6 * u), true);
+        }
+      }
+      // v1.4: unused (amber hatch) / overlapping (red) / past-the-edge (red edge bar) areas when custom segments don't fill the screen
+      if (fit && !fit.exact && inc.unused) {
+        const step = Math.max(8 * u, Math.min(w, h) / 40);
+        for (const r of fit.unused) {
+          ctx.save(); ctx.beginPath(); ctx.rect(r.x0, r.y0, r.w, r.h); ctx.clip();
+          ctx.fillStyle = hexA(C.seg, 0.22); ctx.fillRect(r.x0, r.y0, r.w, r.h);
+          ctx.strokeStyle = hexA(C.seg, 0.85); ctx.lineWidth = Math.max(u, lw * 0.9); ctx.beginPath();
+          for (let d = -r.h; d < r.w + r.h; d += step) { ctx.moveTo(r.x0 + d, r.y0); ctx.lineTo(r.x0 + d + r.h, r.y0 + r.h); }
+          ctx.stroke(); ctx.restore();
+          // tiny gaps (e.g. 4 px on an 11k screen) would be invisible: add an outward marker so it can be found
+          if (r.w < 6 * u || r.h < 6 * u) {
+            ctx.save(); ctx.strokeStyle = C.seg; ctx.lineWidth = Math.max(2 * u, lw * 1.5); glow(C.seg);
+            if (r.w < 6 * u) { const x = r.x0 + r.w / 2; ctx.beginPath(); ctx.moveTo(x, r.y0); ctx.lineTo(x, r.y1); ctx.stroke(); }
+            if (r.h < 6 * u) { const y = r.y0 + r.h / 2; ctx.beginPath(); ctx.moveTo(r.x0, y); ctx.lineTo(r.x1, y); ctx.stroke(); }
+            noGlow(); ctx.restore();
+          }
+        }
+        ctx.fillStyle = 'rgba(255,60,80,0.35)';
+        for (const r of fit.overlaps) ctx.fillRect(r.x0, r.y0, Math.max(r.w, 3 * u), r.h);
+        ctx.fillStyle = '#ff3c50';
+        for (const q of fit.outside) {
+          const g = q.seg, bw = Math.max(4 * u, lw * 2), y0 = Math.max(0, g.y0), y1 = Math.min(h, g.y1), x0 = Math.max(0, g.x0), x1 = Math.min(w, g.x1);
+          if (q.R) ctx.fillRect(w - bw, y0, bw, y1 - y0); if (q.L) ctx.fillRect(0, y0, bw, y1 - y0);
+          if (q.B) ctx.fillRect(x0, h - bw, x1 - x0, bw); if (q.T) ctx.fillRect(x0, 0, x1 - x0, bw);
+        }
+      }
+      // segment text
+      if (inc.coordLabels && showSegs && (inc.segCenters || inc.segDividers)) {
+        for (const g of segs) {
+          if (inc.segCenters) text(custom ? `${X(g.cx)}, ${Y(g.cy)}` : `${X(g.cx)}`, g.cx, Math.min(h, g.y1) - fs * 1.9, { align: 'center', color: C.seg, fs: fs * 0.85 });
+          if (inc.segDividers && !custom && g.i > 0) text(`${X(g.x0)}`, g.x0, ly + fs * 0.6, { align: 'center', color: C.seg, fs: fs * 0.75 });
+        }
+      }
+      // custom segment names + left edge, at the top of each segment
+      if (custom && inc.segDividers && (inc.labels || inc.coordLabels)) {
+        for (const g of segs) {
+          const t = [inc.labels ? g.name : '', inc.labels ? `${F(g.w)}×${F(g.h)}` : '', inc.coordLabels ? `x ${X(g.x0)}` : ''].filter(Boolean).join('  ');
+          text(t, g.x0 + fs * 0.5, Math.max(0, g.y0) + (g.x0 < fs * 2 ? ly + fs * 1.1 : fs * 1.8), { color: C.seg, fs: fs * 0.85, bold: true });
+        }
+      }
+    },
+    pip() {
+      if (!inc.boxes) return;
+      for (const b of s.boxes || []) {
+        const c = o.boxOwnColors ? b.color : C.box;
+        ctx.fillStyle = hexA(c, 0.16); ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = c; ctx.lineWidth = lw * (b.id === o.selectedId ? 2 : 1.4); glow(c);
+        ctx.strokeRect(b.x + ctx.lineWidth / 2, b.y + ctx.lineWidth / 2, b.w - ctx.lineWidth, b.h - ctx.lineWidth); noGlow();
+        ctx.lineWidth = lw; cross(b.x + b.w / 2, b.y + b.h / 2, Math.max(Math.min(b.w, b.h) * 0.06, 6 * u), false);
+      }
+      if (inc.labels || inc.coordLabels) {
+        for (const b of s.boxes || []) {
+          const c = o.boxOwnColors ? b.color : C.box, lines = [];
+          if (inc.labels) lines.push([b.name, c, true, 1]);
+          if (inc.coordLabels) { lines.push([`${centered ? 'TL ' : ''}x${X(b.x)} y${Y(b.y)}`, C.text, false, 0.85]); lines.push([`${b.w}×${b.h}`, C.text, false, 0.85]); lines.push([`ctr ${X(b.x + b.w / 2)}, ${Y(b.y + b.h / 2)}`, C.text, false, 0.85]); }
+          const lh = fs * 1.25, need = lh * lines.length + fs * 0.6;
+          // inside top-left when the box is tall enough, otherwise stacked just below (or above) the box
+          let y0 = b.h >= need + fs * 2 ? b.y + fs * 1.2 : (b.y + b.h + need <= h ? b.y + b.h + fs * 1.1 : b.y - need + fs * 0.9);
+          lines.forEach(([t, col, bold, k], i) => text(t, b.x + fs * 0.4, y0 + i * lh, { color: col, bold, fs: fs * k }));
+        }
+      }
+    },
+  };
+  for (const l of G.normLayers(o.layers)) {
+    if (!l.on || !(l.opacity > 0)) continue;
+    LA = l.opacity; ctx.globalAlpha = LA; ctx.save(); LAYER[l.id](); ctx.restore(); ctx.globalAlpha = 1; LA = 1;
+  }
+
+  // Screen-level text on top
   if (inc.coordLabels) {
     const cf = fs * 0.8;
     text(`${X(0)},${Y(0)}${centered ? '' : '  x→ y↓'}`, cf * 0.35, cf * 1.25, { fs: cf, bold: !centered });
@@ -151,42 +220,10 @@ export function drawScreen(ctx, s, o) {
     text(`${X(0)},${Y(h)}`, cf * 0.35, h - cf * 0.45, { fs: cf });
     text(`${X(w)},${Y(h)}`, w - cf * 0.35, h - cf * 0.45, { fs: cf, align: 'right' });
   }
-  let ly = fs * 2.75;
-  if (inc.labels) {
-    text(`${s.name}  ${w}×${h}`, fs * 0.6, ly, { bold: true, fs: fs * 1.25 }); ly += fs * 1.4;
-    if (showSegs && !custom) { text(`${segs.length} segments × ${F(segs[0].w)}×${h}`, fs * 0.6, ly, { color: C.seg }); ly += fs * 1.3; }
-    if (custom) { text(`${segs.length} segment${segs.length > 1 ? 's' : ''}: ${segs.map(g => `${F(g.w)}×${F(g.h)}`).join(' + ')}`, fs * 0.6, ly, { color: C.seg }); ly += fs * 1.3; }
-    if (fit && !fit.exact && inc.unused) { text(`⚠ Segments don't fill the screen: ${fit.badge}`, fs * 0.6, ly, { color: fit.level === 'error' ? '#ff6b7a' : C.seg, bold: true }); ly += fs * 1.3; }
-    if (pinfo) { text(`Panels ${pinfo.pw}×${pinfo.ph}: ${pinfo.countText}${pinfo.whole ? '' : ` (${pinfo.exactText})`}`, fs * 0.6, ly, { color: C.text, fs: fs * 0.85 }); ly += fs * 1.2; }
-    if (centered) { text('Origin 0,0 = center · Y down', fs * 0.6, ly, { fs: fs * 0.8, color: C.line }); ly += fs * 1.2; }
-  }
-  if (inc.boxes && (inc.labels || inc.coordLabels)) {
-    for (const b of s.boxes || []) {
-      const c = o.boxOwnColors ? b.color : C.box, lines = [];
-      if (inc.labels) lines.push([b.name, c, true, 1]);
-      if (inc.coordLabels) { lines.push([`${centered ? 'TL ' : ''}x${X(b.x)} y${Y(b.y)}`, C.text, false, 0.85]); lines.push([`${b.w}×${b.h}`, C.text, false, 0.85]); lines.push([`ctr ${X(b.x + b.w / 2)}, ${Y(b.y + b.h / 2)}`, C.text, false, 0.85]); }
-      const lh = fs * 1.25, need = lh * lines.length + fs * 0.6;
-      // inside top-left when the box is tall enough, otherwise stacked just below (or above) the box
-      let y0 = b.h >= need + fs * 2 ? b.y + fs * 1.2 : (b.y + b.h + need <= h ? b.y + b.h + fs * 1.1 : b.y - need + fs * 0.9);
-      lines.forEach(([t, col, bold, k], i) => text(t, b.x + fs * 0.4, y0 + i * lh, { color: col, bold, fs: fs * k }));
-    }
-  }
+  screenLabels(false);
   if (inc.coordLabels) {
     text(`${X(w / 2)}, ${Y(h / 2)}${centered ? '  origin' : ''}`, w / 2 + fs * 0.5, h / 2 - fs * 0.5, { bold: true });
     if (inc.thirds) for (const [x, y] of [[w / 3, h / 3], [2 * w / 3, h / 3], [w / 3, 2 * h / 3], [2 * w / 3, 2 * h / 3]]) text(`${X(x)}, ${Y(y)}`, x + fs * 0.4, y - fs * 0.4, { fs: fs * 0.8 });
-    if (showSegs && (inc.segCenters || inc.segDividers)) {
-      for (const g of segs) {
-        if (inc.segCenters) text(custom ? `${X(g.cx)}, ${Y(g.cy)}` : `${X(g.cx)}`, g.cx, Math.min(h, g.y1) - fs * 1.9, { align: 'center', color: C.seg, fs: fs * 0.85 });
-        if (inc.segDividers && !custom && g.i > 0) text(`${X(g.x0)}`, g.x0, ly + fs * 0.6, { align: 'center', color: C.seg, fs: fs * 0.75 });
-      }
-    }
-  }
-  // custom segment names + left edge, at the top of each segment
-  if (custom && inc.segDividers && (inc.labels || inc.coordLabels)) {
-    for (const g of segs) {
-      const t = [inc.labels ? g.name : '', inc.labels ? `${F(g.w)}×${F(g.h)}` : '', inc.coordLabels ? `x ${X(g.x0)}` : ''].filter(Boolean).join('  ');
-      text(t, g.x0 + fs * 0.5, Math.max(0, g.y0) + (g.x0 < fs * 2 ? ly + fs * 1.1 : fs * 1.8), { color: C.seg, fs: fs * 0.85, bold: true });
-    }
   }
   // Interactive overlays (preview only)
   if (o.snapLines && o.snapLines.length) {
@@ -253,10 +290,11 @@ export function exportFontSize(s, ex) {
 }
 
 /** Render a screen at native resolution and return a PNG Blob. */
+/** Render a screen at native resolution and return a PNG Blob. ex.layers = job layer order/opacity (v1.9; default when missing). */
 export function screenToBlob(s, ex, originMode = 'tl') {
   const c = document.createElement('canvas'); c.width = s.w; c.height = s.h;
   const ctx = c.getContext('2d');
   drawScreen(ctx, s, { u: 1, lw: ex.lw, inc: ex.inc, colors: { bg: ex.bg, line: ex.line, seg: ex.seg, box: ex.box, text: ex.text },
-    boxOwnColors: ex.boxOwnColors, fs: exportFontSize(s, ex), crisp: true, origin: G.originOf(s, originMode) });
+    boxOwnColors: ex.boxOwnColors, fs: exportFontSize(s, ex), crisp: true, origin: G.originOf(s, originMode), layers: ex.layers });
   return new Promise((res, rej) => c.toBlob(b => { c.width = c.height = 0; b ? res(b) : rej(new Error('PNG encode failed (canvas too large for this device?)')); }, 'image/png'));
 }
