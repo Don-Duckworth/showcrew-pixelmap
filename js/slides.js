@@ -136,3 +136,23 @@ export function onCurrent(c, r) {
   const k = c.inPerPx, cv = v => ({ in: v, cm: v * PPT.CM_PER_IN, pt: v * PPT.PT_PER_IN });
   return { name: r.name, left: cv((r.x - c.offX) * k), top: cv((r.y - c.offY) * k), width: cv(r.w * k), height: cv(r.h * k) };
 }
+
+/**
+ * PowerPoint slide size → screen pixels (v1.5).
+ * by 'ppi': px = inches × ppi (PowerPoint's own mapping is 96 px/in — its default picture export).
+ * by 'width': the slide is exported at a target pixel width (e.g. Mac File ▸ Export ▸ PNG width, or the output raster):
+ *             ppi = width ÷ slide inches, height follows the slide's aspect.
+ * Returns the exact (fractional) pixels and whole-pixel values (rounded half up), plus the ppi used.
+ */
+export function slideToPx(sw, sh, unit = 'in', by = 'ppi', value = PPT.PX_PER_IN) {
+  const toIn = v => (unit === 'cm' ? v / PPT.CM_PER_IN : v);
+  const wIn = toIn(+sw), hIn = toIn(+sh), v = +value;
+  if (!(wIn > 0 && hIn > 0 && v > 0)) return null;
+  const ppi = by === 'width' ? v / wIn : v;
+  const exW = wIn * ppi, exH = hIn * ppi;
+  const rnd = x => Math.max(1, Math.round(x + 1e-9));
+  return { wIn, hIn, ppi, exW, exH, w: by === 'width' ? Math.round(v) : rnd(exW), h: rnd(exH),
+    outOfRange: wIn > PPT.MAX_IN + 1e-9 || hIn > PPT.MAX_IN + 1e-9 || wIn < PPT.MIN_IN - 1e-9 || hIn < PPT.MIN_IN - 1e-9 };
+}
+/** "55.561x5.28" (or "141.125x13.411cm") for screen names. */
+export const slideLabel = (w, h, unit = 'in') => `${f3(+w)}x${f3(+h)}${unit === 'cm' ? 'cm' : ''}`;

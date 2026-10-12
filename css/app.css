@@ -209,6 +209,12 @@ code { font: 12px var(--mono); color: var(--cyan); background: rgba(0, 229, 255,
 .ro.sl td { padding: 7px 5px; font: 600 13px var(--mono); } .ro.sl td:first-child { font-family: var(--sans); font-weight: 650; }
 .pptcard .seg.full button { white-space: normal; line-height: 1.15; font-size: 12.5px; padding: 4px 6px; }
 
+/* v1.5 slide-size dialog */
+.sdlg { display: flex; flex-direction: column; gap: 10px; }
+.sd-res { background: linear-gradient(160deg, rgba(0, 229, 255, .12), rgba(0, 0, 0, .2)); border: 1px solid var(--edge2); border-radius: 12px; padding: 10px 12px; }
+.sd-res .big { font-size: 24px; }
+.sd-tbl td { font-size: 12.5px; }
+
 /* ---------- modal / toast ---------- */
 #modal { position: fixed; inset: 0; z-index: 50; background: rgba(0, 4, 10, .7); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: flex-start; justify-content: center; padding: calc(60px + var(--sat)) 14px 14px; }
 #modal[hidden] { display: none; }

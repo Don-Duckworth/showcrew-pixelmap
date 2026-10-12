@@ -170,6 +170,48 @@ export function segFit(s) {
   return res;
 }
 
+/**
+ * Scale a set of edge coordinates from [0, oldLen] to [0, newLen] in whole pixels (v1.5).
+ * Every distinct edge is mapped once (round(e × f)), so segments that shared an edge still share it (no new gaps/overlaps);
+ * the order of distinct edges is kept strictly increasing, so an original gap or overlap never rounds away to nothing.
+ * Returns a function original-edge → new-edge.
+ */
+export function edgeMapper(edges, oldLen, newLen) {
+  const f = newLen / oldLen, uniq = [...new Set([0, oldLen, ...edges])].sort((a, b) => a - b), map = new Map();
+  let prev = -Infinity;
+  const raw = uniq.map(e => (e === oldLen ? newLen : e === 0 ? 0 : rnd(e * f)));
+  // forward: keep strictly increasing
+  for (let i = 0; i < uniq.length; i++) { let v = raw[i]; if (i && v <= prev) v = prev + 1; raw[i] = v; prev = v; }
+  // backward: an edge that was ≤ oldLen must stay ≤ newLen when possible (re-tighten after the forward push)
+  const iL = uniq.indexOf(oldLen);
+  if (raw[iL] > newLen) { raw[iL] = newLen; for (let i = iL - 1; i >= 0; i--) if (raw[i] >= raw[i + 1]) raw[i] = raw[i + 1] - 1; }
+  uniq.forEach((e, i) => map.set(e, raw[i]));
+  return e => map.get(e) ?? rnd(e * f);
+}
+/**
+ * New W×H for a screen, keeping its segments and PiP boxes (v1.5).
+ * mode 'scale' (default): segments + boxes scale by W and H factors via edgeMapper (butted segments stay butted,
+ *   an original fit gap shrinks/grows proportionally but doesn't vanish).
+ * mode 'keep': segment + box pixel sizes/offsets unchanged (an equal split is first frozen to its whole-px custom sizes,
+ *   so it doesn't silently re-split) — segFit() then reports anything that no longer fits.
+ * Physical sizes (pw/ph), names, ids, grid and other fields are kept. Returns a NEW screen object (input untouched).
+ */
+export function resizeScreen(s, W, H, mode = 'scale') {
+  const c = JSON.parse(JSON.stringify(s)); c.w = W; c.h = H;
+  if (mode === 'keep') {
+    if (!isCustomSegs(s) && segCount(s) > 1) { c.segMode = 'custom'; c.segs = splitEqualInt(s.w, s.h, segCount(s)).map((g, i) => ({ id: `seg_${i}_${Date.now().toString(36)}`, ...g, pw: null, ph: null })); c.segments = c.segs.length; }
+    return c;
+  }
+  if (isCustomSegs(s)) {
+    const mx = edgeMapper(s.segs.flatMap(g => [g.x, g.x + g.w]), s.w, W), my = edgeMapper(s.segs.flatMap(g => [g.y, g.y + g.h]), s.h, H);
+    c.segs = s.segs.map((g, i) => { const x0 = mx(g.x), x1 = mx(g.x + g.w), y0 = my(g.y), y1 = my(g.y + g.h); return { ...c.segs[i], x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) }; });
+  }
+  const fx = W / s.w, fy = H / s.h;
+  c.boxes = (s.boxes || []).map((b, i) => { const x0 = rnd(b.x * fx), y0 = rnd(b.y * fy); return { ...c.boxes[i], x: x0, y: y0, w: Math.max(1, rnd((b.x + b.w) * fx) - x0), h: Math.max(1, rnd((b.y + b.h) * fy) - y0) }; });
+  if (c.grid && c.grid.mode === 'px') c.grid.step = c.grid.step;   // grids are in px and stay as-is (LED panels don't scale)
+  return c;
+}
+
 /** Physical size → pixel density. unit 'ft' | 'm'. pw/ph = physical width/height of a w×h px segment. */
 export const MM_PER = { ft: 304.8, m: 1000 };
 export function physInfo(w, h, pw, ph, unit = 'ft') {

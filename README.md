@@ -35,6 +35,17 @@ Plain HTML/CSS/JS, no build step. Deploy the static files (index.html, manifest.
 - Tests: `node tools/test-segments.mjs` (segment / fit / migration / slide math) and `node tools/segments-test.mjs` (iPad / iPhone / desktop
   browser checks, .pptx XML check, optional LibreOffice render; writes `screenshots/*segments*`, `*slides*`, `template-example-*`).
 
+## Screens from PowerPoint slide sizes (v1.5)
+- **＋ Add** (Screens pane) opens a dialog: size in pixels, or a PowerPoint slide size W × H (in or cm) with either px per inch
+  (default 96 = PowerPoint's mapping) or a target pixel width (e.g. the export width; height follows the aspect). Live preview of the exact
+  and whole-pixel size (rounded half up). The new screen remembers the slide size as its "current slide".
+- Screen tab ▸ **Duplicate from slide size…** / **Resize from slide size…**: same inputs, prefilled from the screen's current slide size,
+  with *Scale proportionally* (default) or *Keep pixel sizes* for segments and PiP boxes, and a before → after preview including the new fit check.
+  Scaling maps every distinct segment edge once (`G.edgeMapper`), so butted segments stay butted, an exact fill stays exact, and an original
+  gap/overlap scales but never rounds away. Physical sizes (ft/m) are kept. Copies are named e.g. `Screen 1 (PPT 55.561x5.28)`.
+- Example: 55.561 × 5.28 in @ 96 px/in = 5333.856 × 506.88 → 5334 × 507 (segments 3510/4320/3510 → 1650/2032/1650, 4 px gap → 2 px);
+  @ target width 11344 → 11344 × 1078. Tests: `node tools/test-segments.mjs`, `node tools/slide-resize-test.mjs`.
+
 ## Cloud sync (Supabase, optional)
 - Configure in `js/config.js` (`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`). Empty key → sync UI hidden, nothing loaded, app is 100% local.
 - Offline-first: localStorage is the source of truth. When signed in + online the app pulls/pushes on open, on

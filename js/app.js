@@ -60,7 +60,7 @@ function renderScreens() {
   const j = job(), cur = scr();
   const gl = isGlobal();
   $('#screens').innerHTML = `
-    <div class="pane-h"><span>SCREENS</span><button class="btn sm ghost" data-act="addScreen">＋ Add</button></div>
+    <div class="pane-h"><span>SCREENS</span><button class="btn sm ghost" data-act="openSlideDlg" data-k="new">＋ Add</button></div>
     <div class="scr-list">${j.screens.map((s, i) => {
       const a = G.aspect(s.w, s.h), n = G.segCount(s), fit = G.segFit(s);
       return `<button class="scr-card ${s.id === cur.id ? 'on' : ''}" data-act="pickScreen" data-id="${s.id}">
@@ -266,7 +266,8 @@ function panelScreen() {
     ${g.mode === 'px' ? `<div class="grid2">${numInput('grid.step', g.step, 'Step px', 'min="1"')}</div>` : ''}
   </div>
   <div class="row wrap"><button class="btn sm" data-act="moveScreen" data-d="-1" ${idx === 0 ? 'disabled' : ''}>↑ Move up</button><button class="btn sm" data-act="moveScreen" data-d="1" ${idx === j.screens.length - 1 ? 'disabled' : ''}>↓ Move down</button>
-  <button class="btn sm" data-act="dupScreen">Duplicate</button><button class="btn sm danger" data-act="delScreen">Delete screen</button></div>`;
+  <button class="btn sm" data-act="dupScreen">Duplicate</button><button class="btn sm danger" data-act="delScreen">Delete screen</button></div>
+  <div class="row wrap"><button class="btn sm" data-act="openSlideDlg" data-k="dup">⧉ Duplicate from slide size…</button><button class="btn sm" data-act="openSlideDlg" data-k="resize">⤢ Resize from slide size…</button></div>`;
 }
 
 // ---------- segment editor (Screen tab) ----------
@@ -658,6 +659,84 @@ async function doExport(screens) {
   toast(`${ui.exportFiles.length} PNG ready — tap Share or a file`);
 }
 
+// ---------- v1.5: new / duplicate / resize a screen from a PowerPoint slide size ----------
+const SD_TITLE = { new: 'NEW SCREEN', dup: 'DUPLICATE FROM SLIDE SIZE', resize: 'RESIZE FROM SLIDE SIZE' };
+function openSlideDlg(kind) {
+  const s = scr(), pc = s.pptCur, j = job();
+  ui.sd = {
+    kind, from: kind === 'new' ? 'px' : 'ppt', pw: 1920, ph: 1080,
+    unit: pc ? pc.unit : slUnit(), sw: pc ? pc.w : (slUnit() === 'cm' ? 33.867 : 13.333), sh: pc ? pc.h : (slUnit() === 'cm' ? 19.05 : 7.5),
+    by: 'ppi', ppi: SL.PPT.PX_PER_IN, tw: s.w, seg: 'scale', name: kind === 'new' ? `Screen ${j.screens.length + 1}` : null, nameEdited: false,
+  };
+  renderSlideDlg();
+}
+function sdResult() {
+  const d = ui.sd, s = scr();
+  if (d.from === 'px') { const w = Math.round(+d.pw), h = Math.round(+d.ph); return w >= 1 && h >= 1 && w <= 65536 && h <= 65536 ? { w, h, exW: w, exH: h, px: true } : null; }
+  const r = SL.slideToPx(d.sw, d.sh, d.unit, d.by, d.by === 'width' ? d.tw : d.ppi);
+  return r && r.w <= 65536 && r.h <= 65536 ? r : null;
+}
+const sdName = () => { const d = ui.sd, s = scr(); return d.nameEdited || d.kind === 'new' ? d.name : `${s.name} (PPT ${SL.slideLabel(d.sw, d.sh, d.unit)})`; };
+function renderSlideDlg() {
+  const d = ui.sd, s = scr(), hasStuff = G.hasSegs(s) || s.boxes.length;
+  const seg = (k, opts) => `<div class="seg full">${opts.map(([v, l]) => `<button type="button" class="${d[k] === v ? 'on' : ''}" data-act="sdSet" data-k="${k}" data-v="${v}">${l}</button>`).join('')}</div>`;
+  const inp = (id, v, label, extra = '') => `<label class="fld"><span>${label}</span><input class="inp num" id="${id}" inputmode="decimal" type="number" step="any" value="${v ?? ''}" ${extra}></label>`;
+  let h = `<div class="sdlg" data-kind="${d.kind}"><div class="row between"><div class="lbl">${SD_TITLE[d.kind]}${d.kind !== 'new' ? ` · ${esc(s.name)} ${s.w}×${s.h}` : ''}</div><button type="button" class="btn sm ghost" data-act="closeModal">✕</button></div>`;
+  if (d.kind === 'new') h += `<div class="fld"><span>Size from</span>${seg('from', [['px', 'Pixels'], ['ppt', 'PowerPoint slide size']])}</div>`;
+  if (d.from === 'px') h += `<div class="grid2">${inp('sdPw', d.pw, 'Width px', 'min="1"')}${inp('sdPh', d.ph, 'Height px', 'min="1"')}</div>`;
+  else h += `<div class="grid3">${inp('sdSw', d.sw, `Slide width (${d.unit})`, 'min="0"')}${inp('sdSh', d.sh, `Slide height (${d.unit})`, 'min="0"')}<div class="fld"><span>Unit</span>${seg('unit', [['in', 'in'], ['cm', 'cm']])}</div></div>
+    <div class="fld"><span>Pixels from</span>${seg('by', [['ppi', 'Pixels per inch'], ['width', 'Target pixel width']])}</div>
+    <div class="grid2">${d.by === 'ppi' ? inp('sdPpi', d.ppi, 'px per inch (PowerPoint = 96)', 'min="0"') : inp('sdTw', d.tw, 'Target width px (e.g. export width)', 'min="1"')}
+      <div class="fld"><span>&nbsp;</span><p class="hint">${d.by === 'ppi' ? 'PowerPoint maps 96 px to 1 inch (its default picture export).' : 'Height follows the slide\'s aspect ratio.'}</p></div></div>`;
+  if (d.kind !== 'resize') h += `<label class="fld"><span>Name</span><input class="inp" id="sdName" value="${esc(sdName())}"></label>`;
+  if (d.kind !== 'new' && hasStuff) h += `<div class="fld"><span>Segments &amp; PiP boxes</span>${seg('seg', [['scale', 'Scale proportionally'], ['keep', 'Keep pixel sizes']])}</div>`;
+  h += `<div id="sdPrev"></div><div class="row"><button type="button" class="btn ghost grow" data-act="closeModal">Cancel</button><button type="button" class="btn primary grow" id="sdOk" data-act="sdApply">${d.kind === 'new' ? '＋ Create screen' : d.kind === 'dup' ? '⧉ Duplicate' : '⤢ Resize'}</button></div></div>`;
+  const m = modal(h);
+  const bind = (id, k, isName) => { const el = $('#' + id, m); if (el) el.addEventListener('input', () => { d[k] = isName ? el.value : el.value; if (isName) d.nameEdited = true; renderSdPreview(); }); };
+  bind('sdPw', 'pw'); bind('sdPh', 'ph'); bind('sdSw', 'sw'); bind('sdSh', 'sh'); bind('sdPpi', 'ppi'); bind('sdTw', 'tw'); bind('sdName', 'name', true);
+  renderSdPreview();
+}
+function renderSdPreview() {
+  const d = ui.sd, s = scr(), el = $('#sdPrev'); if (!el) return;
+  const r = sdResult(), ok = $('#sdOk');
+  if (ok) ok.disabled = !r;
+  const nm = $('#sdName'); if (nm && !d.nameEdited && d.kind !== 'new' && document.activeElement !== nm) nm.value = sdName();
+  if (!r) { el.innerHTML = `<p class="warn">Enter positive numbers to see the pixel size.</p>`; return; }
+  const exact = (v, w) => (G.isInt(v) ? String(Math.round(v)) : `${SL.f3(v)}${w != null ? ` → ${w}` : ''}`);
+  let h = `<div class="sd-res"><div class="lbl">NEW PIXEL SIZE</div><div class="big">${r.w}<i>×</i>${r.h}</div>`;
+  if (!r.px) h += `<div class="sub">exact ${exact(r.exW, r.w)} × ${exact(r.exH, r.h)} px · ${SL.f3(r.ppi)} px/in · ${SL.f3(r.wIn)} × ${SL.f3(r.hIn)} in${r.w !== r.exW || r.h !== r.exH ? ' · rounded to whole px' : ''}</div>`;
+  h += `<div class="sub">aspect ${G.aspect(r.w, r.h).decText}${d.kind !== 'new' ? ` (was ${G.aspect(s.w, s.h).decText}) · scale ×${SL.f3(r.w / s.w)} W, ×${SL.f3(r.h / s.h)} H` : ''}</div></div>`;
+  if (r.outOfRange) h += `<p class="warn">⚠ ${SL.f3(r.wIn)} × ${SL.f3(r.hIn)} in is outside PowerPoint's 1–56 in per side — check the numbers.</p>`;
+  if (d.kind !== 'new') {
+    const c = G.resizeScreen(s, r.w, r.h, d.seg), f = G.segFit(c), segs = G.hasSegs(c) ? G.segments(c) : [], old = G.segments(s);
+    if (segs.length) h += `<table class="ro sl sd-tbl"><thead><tr><th>Segment</th><th>Now</th><th>New</th></tr></thead><tbody>${segs.map((g, i) => `<tr><td>${esc(g.custom ? g.name : `Segment ${g.n}`)}</td><td>${F(old[i]?.w)}×${F(old[i]?.h)}<span class="r">@ ${F(old[i]?.x0)}, ${F(old[i]?.y0)}</span></td><td><b>${F(g.w)}×${F(g.h)}</b><span class="r">@ ${F(g.x0)}, ${F(g.y0)}</span></td></tr>`).join('')}</tbody></table>`;
+    if (c.boxes.length) h += `<table class="ro sl sd-tbl"><thead><tr><th>PiP box</th><th>Now</th><th>New</th></tr></thead><tbody>${c.boxes.map((b, i) => `<tr><td>${esc(b.name)}</td><td>${s.boxes[i].w}×${s.boxes[i].h}<span class="r">@ ${s.boxes[i].x}, ${s.boxes[i].y}</span></td><td><b>${b.w}×${b.h}</b><span class="r">@ ${b.x}, ${b.y}</span></td></tr>`).join('')}</tbody></table>`;
+    const of = G.segFit(s);
+    if (G.isCustomSegs(c)) h += f.exact ? `<p class="fitok">✓ Segments fill the new size exactly.</p>` : `<div class="fitwarn ${f.level}"><div class="fw-h">⚠ AFTER ${d.kind === 'dup' ? 'DUPLICATE' : 'RESIZE'} <span>${esc(f.badge)}</span></div><ul>${[...f.issues].sort((x, y) => (y.level === 'error') - (x.level === 'error')).map(i => `<li class="${i.level}">${esc(i.text)}</li>`).join('')}</ul>${!of.exact && d.seg === 'scale' ? `<p class="hint">The original was already ${esc(of.badge)}; scaling keeps that gap proportionally.</p>` : ''}</div>`;
+    if (segs.some(g => g.custom)) h += `<p class="hint">Physical sizes (${s.physUnit === 'm' ? 'meters' : 'feet'}) are kept, so px per ${s.physUnit === 'm' ? 'meter' : 'foot'} changes with the new size.</p>`;
+  }
+  el.innerHTML = h;
+}
+function applySlideDlg() {
+  const d = ui.sd, s = scr(), j = job(), r = sdResult(); if (!r) return;
+  const slide = d.from === 'ppt' ? { w: +d.sw, h: +d.sh, unit: d.unit } : null;
+  if (d.kind === 'new') {
+    const n = Store.makeScreen((d.name || '').trim() || `Screen ${j.screens.length + 1}`, r.w, r.h), last = j.screens[j.screens.length - 1];
+    if (last) n.x = last.x + last.w; if (slide) n.pptCur = slide;
+    j.screens.push(n); j.currentScreenId = n.id; ui.tab = 'screen'; ui.sel = null;
+    closeModal(); commit(); toast(`Added ${n.name} ${r.w}×${r.h}`); return;
+  }
+  const c = G.resizeScreen(s, r.w, r.h, d.seg);
+  if (slide) c.pptCur = slide;
+  if (d.kind === 'dup') {
+    c.id = Store.uid('scr'); c.name = (sdName() || '').trim() || `${s.name} copy`;
+    c.boxes.forEach(b => b.id = Store.uid('box')); (c.segs || []).forEach(g => g.id = Store.uid('seg'));
+    j.screens.splice(j.screens.indexOf(s) + 1, 0, c); j.currentScreenId = c.id; ui.sel = null;
+    closeModal(); commit(); toast(`Duplicated → ${c.name} ${r.w}×${r.h}`); return;
+  }
+  Object.assign(s, c, { id: s.id }); ui.sel = null; closeModal(); commit(); toast(`Resized to ${r.w}×${r.h}`);
+}
+
 // ---------- cloud sync (only when js/config.js has a publishable key) ----------
 // Sign-in = email + password, then a 6-digit authenticator (TOTP) code — same as ShowCrew GearVault.
 // No email links are needed to sign in (work-mail link scanners can't burn anything). Signed out, the app works 100% locally.
@@ -886,6 +965,9 @@ const ACTIONS = {
       ui.lastPptx = f; await shareOrDownload([f]);
     } catch (e) { toast('PPTX failed: ' + e.message); }
   },
+  openSlideDlg: el => openSlideDlg(el.dataset.k),
+  sdSet: el => { ui.sd[el.dataset.k] = el.dataset.v; renderSlideDlg(); },
+  sdApply: () => applySlideDlg(),
   exportOne: () => doExport([scr()]),
   exportAll: () => doExport(job().screens.slice()),
   shareFiles: () => shareOrDownload(ui.exportFiles.map(f => f.file)),

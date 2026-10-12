@@ -151,4 +151,59 @@ t('CSV summary', () => {
   assert.deepEqual(rows[3].slice(13), ['1755', '0', '2160', '540']);
   assert.ok(SL.toCsv([['a,b', 'c']]).startsWith('"a,b",c'));
 });
+
+// ---------- v1.5: slide size → pixels, duplicate/resize keeping segments ----------
+t('slide size → px (Don: 55.561 × 5.28 in)', () => {
+  let r = SL.slideToPx(55.561, 5.28, 'in', 'ppi', 96);
+  near(r.exW, 5333.856); near(r.exH, 506.88); assert.equal(r.w, 5334); assert.equal(r.h, 507); assert.equal(r.ppi, 96); assert.equal(r.outOfRange, false);
+  r = SL.slideToPx(55.561, 5.28, 'in', 'width', 11344);
+  assert.equal(r.w, 11344); assert.equal(r.h, 1078); near(r.exH, 1078.028, 1e-3); near(r.ppi, 204.172, 1e-3);
+  r = SL.slideToPx(13.333, 7.5, 'in', 'ppi', 96); assert.deepEqual([r.w, r.h], [1280, 720]);
+  r = SL.slideToPx(33.867, 19.05, 'cm', 'ppi', 96); assert.deepEqual([r.w, r.h], [1280, 720]);
+  r = SL.slideToPx(141.125, 13.411, 'cm', 'width', 11344); assert.deepEqual([r.w, r.h], [11344, 1078]);
+  r = SL.slideToPx(39.3889, 3.75, 'in', 'ppi', 288); assert.deepEqual([r.w, r.h], [11344, 1080]);
+  assert.ok(SL.slideToPx(60, 5, 'in').outOfRange); assert.equal(SL.slideToPx(0, 5), null); assert.equal(SL.slideToPx(5, 5, 'in', 'ppi', -1), null);
+  assert.equal(SL.slideLabel(55.561, 5.28), '55.561x5.28');
+});
+const segsOf = c => c.segs.map(g => [g.x, g.w, g.h]);
+t('resize: scale proportionally (Don → 5334×507 @ 96 px/in)', () => {
+  const s = { ...DON(), boxes: [{ id: 'b1', name: 'PiP', x: 4710, y: 0, w: 1920, h: 1080 }] }, before = JSON.stringify(s);
+  const c = G.resizeScreen(s, 5334, 507);
+  assert.equal(JSON.stringify(s), before, 'input untouched');
+  assert.deepEqual([c.w, c.h], [5334, 507]);
+  assert.deepEqual(segsOf(c), [[0, 1650, 507], [1650, 2032, 507], [3682, 1650, 507]]);   // 3510·f=1650.4, 7830·f=3681.7, 11340·f=5332.1
+  assert.ok(c.segs.every((g, i) => i === 0 || g.x === c.segs[i - 1].x + c.segs[i - 1].w), 'still butted');
+  const f = G.segFit(c); assert.equal(f.badge, '2 px short'); assert.equal(f.overlaps.length, 0);   // original 4 px gap scaled to 2 px
+  assert.deepEqual(c.segs.map(g => [g.name, g.pw, g.ph]), [['Left', 52, 16], ['Center', 66, 16], ['Right', 52, 16]], 'physical feet kept');
+  assert.deepEqual([c.boxes[0].x, c.boxes[0].y, c.boxes[0].w, c.boxes[0].h], [2215, 0, 902, 507]);
+});
+t('resize: target width 11344 → 11344×1078 keeps widths, heights follow', () => {
+  const c = G.resizeScreen(DON(), 11344, 1078);
+  assert.deepEqual(segsOf(c), [[0, 3510, 1078], [3510, 4320, 1078], [7830, 3510, 1078]]); assert.equal(G.segFit(c).badge, '4 px short');
+});
+t('resize: rounding never creates new gaps/overlaps, never erases an original gap', () => {
+  // an exactly-filling 3-way split scaled to awkward sizes stays exact
+  for (const [W, H] of [[5334, 507], [1001, 77], [7, 3], [99999, 12345]]) {
+    const ex = { w: 11344, h: 1080, segMode: 'custom', segs: G.splitEqualInt(11344, 1080, 3) };
+    const c = G.resizeScreen(ex, W, H); assert.ok(G.segFit(c).exact, `exact fill kept at ${W}×${H}: ${JSON.stringify(segsOf(c))}`);
+  }
+  // 13 butted segments of odd widths
+  const odd = { w: 1000, h: 100, segMode: 'custom', segs: Array.from({ length: 13 }, (_, i) => ({ name: 'S' + i, x: 0, y: 0, w: 70 + (i % 5) * 3, h: 100 })) };
+  G.autoPlaceSegs(odd.segs); const tot = odd.segs.reduce((a, g) => a + g.w, 0); odd.w = tot;
+  for (const W of [333, 517, 1999]) { const c = G.resizeScreen(odd, W, 50); assert.ok(G.segFit(c).exact, 'odd exact at ' + W); }
+  // a 1 px original gap shrunk ×0.1 doesn't round away; a 10 px overlap stays an overlap
+  const gap = { w: 2001, h: 100, segMode: 'custom', segs: [{ name: 'A', x: 0, y: 0, w: 1000, h: 100 }, { name: 'B', x: 1001, y: 0, w: 1000, h: 100 }] };
+  let c = G.resizeScreen(gap, 200, 10); assert.ok(c.segs[1].x > c.segs[0].x + c.segs[0].w, 'gap kept ' + JSON.stringify(segsOf(c))); assert.ok(!G.segFit(c).exact);
+  const ov = { w: 1990, h: 100, segMode: 'custom', segs: [{ name: 'A', x: 0, y: 0, w: 1000, h: 100 }, { name: 'B', x: 990, y: 0, w: 1000, h: 100 }] };
+  c = G.resizeScreen(ov, 199, 10); assert.equal(G.segFit(c).overlaps.length, 1);
+});
+t('resize: keep pixel sizes → warns; equal split frozen to whole px', () => {
+  const k = G.resizeScreen(DON(), 5334, 507, 'keep');
+  assert.deepEqual(segsOf(k), [[0, 3510, 1080], [3510, 4320, 1080], [7830, 3510, 1080]]);
+  const f = G.segFit(k); assert.equal(f.level, 'error'); assert.ok(f.issues.some(i => i.text === 'Right is completely off the screen.'));
+  const eq = G.resizeScreen({ w: 11344, h: 1080, segments: 3, boxes: [{ x: 1, y: 2, w: 3, h: 4 }] }, 5334, 507, 'keep');
+  assert.equal(eq.segMode, 'custom'); assert.deepEqual(segsOf(eq), [[0, 3782, 1080], [3782, 3781, 1080], [7563, 3781, 1080]]); assert.deepEqual(eq.boxes[0], { x: 1, y: 2, w: 3, h: 4 });
+  const eqs = G.resizeScreen({ w: 1536, h: 1280, segments: 6, boxes: [] }, 768, 640);   // scale: equal split just follows
+  assert.equal(eqs.segMode, undefined); assert.deepEqual(G.segments(eqs).map(g => g.cx), [64, 192, 320, 448, 576, 704]);
+});
 console.log(`segment + slide tests passed (${n} groups)`);
