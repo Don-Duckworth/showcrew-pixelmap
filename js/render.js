@@ -42,15 +42,30 @@ export function drawScreen(ctx, s, o) {
     if (gl && pi) { ctx.strokeStyle = C.line; ctx.setLineDash([]); ctx.lineWidth = Math.max(u, lw * 0.8); gl.xs.forEach(x => vline(x, 0.5)); gl.ys.forEach(y => hline(y, 0.5)); ctx.lineWidth = lw; }
     else if (gl) { ctx.strokeStyle = C.line; ctx.setLineDash([]); ctx.lineWidth = Math.max(u * 0.75, lw * 0.6); gl.xs.forEach(x => vline(x, 0.32)); gl.ys.forEach(y => hline(y, 0.32)); ctx.lineWidth = lw; }
   }
-  if (segs.length > 1) {
+  const showSegs = G.hasSegs(s), custom = G.isCustomSegs(s);
+  const fit = custom ? G.segFit(s) : null;
+  if (showSegs) {
     if (inc.segGuides) {
       ctx.strokeStyle = C.seg; ctx.setLineDash([lw * 2, lw * 3]);
-      for (const g of segs) { vline(g.cx, 0.55); vline(g.thirds[0], 0.3); vline(g.thirds[1], 0.3); }
+      const vseg = (x, y0, y1, a) => { ctx.globalAlpha = a; ctx.beginPath(); ctx.moveTo(px(x), y0); ctx.lineTo(px(x), y1); ctx.stroke(); ctx.globalAlpha = 1; };
+      const hseg = (y, x0, x1, a) => { ctx.globalAlpha = a; ctx.beginPath(); ctx.moveTo(x0, px(y)); ctx.lineTo(x1, px(y)); ctx.stroke(); ctx.globalAlpha = 1; };
+      for (const g of segs) {
+        vseg(g.cx, g.y0, g.y1, 0.55); vseg(g.thirds[0], g.y0, g.y1, 0.3); vseg(g.thirds[1], g.y0, g.y1, 0.3);
+        if (custom) hseg(g.cy, g.x0, g.x1, 0.45);
+      }
       ctx.setLineDash([]);
     }
-    if (inc.segDividers) { ctx.strokeStyle = C.seg; glow(C.seg); for (let i = 1; i < segs.length; i++) vline(segs[i].x0, 0.95); noGlow(); }
+    if (inc.segDividers) {
+      ctx.strokeStyle = C.seg; glow(C.seg);
+      if (!custom) for (let i = 1; i < segs.length; i++) vline(segs[i].x0, 0.95);
+      else for (const g of segs) {   // every real segment outline (screen-edge sides are drawn too, inset so they stay visible)
+        const t = lw * 1.2; ctx.lineWidth = t; ctx.globalAlpha = 0.95;
+        ctx.strokeRect(g.x0 + t / 2, g.y0 + t / 2, g.w - t, g.h - t); ctx.globalAlpha = 1; ctx.lineWidth = lw;
+      }
+      noGlow();
+    }
     if (inc.segCenters) {
-      ctx.strokeStyle = C.seg; const r = Math.min(segs[0].w, h) * 0.12;
+      ctx.strokeStyle = C.seg; const r = Math.min(...segs.map(g => Math.min(g.w, g.h))) * 0.12;
       for (const g of segs) cross(g.cx, g.cy, Math.max(r, 6 * u), true);
     }
   }
@@ -65,6 +80,32 @@ export function drawScreen(ctx, s, o) {
   }
   if (inc.outline) { ctx.strokeStyle = C.line; ctx.lineWidth = lw * 2; ctx.strokeRect(lw, lw, w - lw * 2, h - lw * 2); ctx.lineWidth = lw; }
 
+  // v1.4 (drawn over the outline so a thin edge gap stays visible): unused (amber hatch) / overlapping (red) / past-the-edge (red edge bar) areas when custom segments don't fill the screen
+  if (fit && !fit.exact && inc.unused) {
+    const step = Math.max(8 * u, Math.min(w, h) / 40);
+    for (const r of fit.unused) {
+      ctx.save(); ctx.beginPath(); ctx.rect(r.x0, r.y0, r.w, r.h); ctx.clip();
+      ctx.fillStyle = hexA(C.seg, 0.22); ctx.fillRect(r.x0, r.y0, r.w, r.h);
+      ctx.strokeStyle = hexA(C.seg, 0.85); ctx.lineWidth = Math.max(u, lw * 0.9); ctx.beginPath();
+      for (let d = -r.h; d < r.w + r.h; d += step) { ctx.moveTo(r.x0 + d, r.y0); ctx.lineTo(r.x0 + d + r.h, r.y0 + r.h); }
+      ctx.stroke(); ctx.restore();
+      // tiny gaps (e.g. 4 px on an 11k screen) would be invisible: add an outward marker so it can be found
+      if (r.w < 6 * u || r.h < 6 * u) {
+        ctx.save(); ctx.strokeStyle = C.seg; ctx.lineWidth = Math.max(2 * u, lw * 1.5); glow(C.seg);
+        if (r.w < 6 * u) { const x = r.x0 + r.w / 2; ctx.beginPath(); ctx.moveTo(x, r.y0); ctx.lineTo(x, r.y1); ctx.stroke(); }
+        if (r.h < 6 * u) { const y = r.y0 + r.h / 2; ctx.beginPath(); ctx.moveTo(r.x0, y); ctx.lineTo(r.x1, y); ctx.stroke(); }
+        noGlow(); ctx.restore();
+      }
+    }
+    ctx.fillStyle = 'rgba(255,60,80,0.35)';
+    for (const r of fit.overlaps) ctx.fillRect(r.x0, r.y0, Math.max(r.w, 3 * u), r.h);
+    ctx.fillStyle = '#ff3c50';
+    for (const o of fit.outside) {
+      const g = o.seg, bw = Math.max(4 * u, lw * 2), y0 = Math.max(0, g.y0), y1 = Math.min(h, g.y1), x0 = Math.max(0, g.x0), x1 = Math.min(w, g.x1);
+      if (o.R) ctx.fillRect(w - bw, y0, bw, y1 - y0); if (o.L) ctx.fillRect(0, y0, bw, y1 - y0);
+      if (o.B) ctx.fillRect(x0, h - bw, x1 - x0, bw); if (o.T) ctx.fillRect(x0, 0, x1 - x0, bw);
+    }
+  }
   // PiP boxes
   if (inc.boxes) {
     for (const b of s.boxes || []) {
@@ -113,7 +154,9 @@ export function drawScreen(ctx, s, o) {
   let ly = fs * 2.75;
   if (inc.labels) {
     text(`${s.name}  ${w}×${h}`, fs * 0.6, ly, { bold: true, fs: fs * 1.25 }); ly += fs * 1.4;
-    if (segs.length > 1) { text(`${segs.length} segments × ${F(segs[0].w)}×${h}`, fs * 0.6, ly, { color: C.seg }); ly += fs * 1.3; }
+    if (showSegs && !custom) { text(`${segs.length} segments × ${F(segs[0].w)}×${h}`, fs * 0.6, ly, { color: C.seg }); ly += fs * 1.3; }
+    if (custom) { text(`${segs.length} segment${segs.length > 1 ? 's' : ''}: ${segs.map(g => `${F(g.w)}×${F(g.h)}`).join(' + ')}`, fs * 0.6, ly, { color: C.seg }); ly += fs * 1.3; }
+    if (fit && !fit.exact && inc.unused) { text(`⚠ Segments don't fill the screen: ${fit.badge}`, fs * 0.6, ly, { color: fit.level === 'error' ? '#ff6b7a' : C.seg, bold: true }); ly += fs * 1.3; }
     if (pinfo) { text(`Panels ${pinfo.pw}×${pinfo.ph}: ${pinfo.countText}${pinfo.whole ? '' : ` (${pinfo.exactText})`}`, fs * 0.6, ly, { color: C.text, fs: fs * 0.85 }); ly += fs * 1.2; }
     if (centered) { text('Origin 0,0 = center · Y down', fs * 0.6, ly, { fs: fs * 0.8, color: C.line }); ly += fs * 1.2; }
   }
@@ -131,14 +174,20 @@ export function drawScreen(ctx, s, o) {
   if (inc.coordLabels) {
     text(`${X(w / 2)}, ${Y(h / 2)}${centered ? '  origin' : ''}`, w / 2 + fs * 0.5, h / 2 - fs * 0.5, { bold: true });
     if (inc.thirds) for (const [x, y] of [[w / 3, h / 3], [2 * w / 3, h / 3], [w / 3, 2 * h / 3], [2 * w / 3, 2 * h / 3]]) text(`${X(x)}, ${Y(y)}`, x + fs * 0.4, y - fs * 0.4, { fs: fs * 0.8 });
-    if (segs.length > 1 && (inc.segCenters || inc.segDividers)) {
+    if (showSegs && (inc.segCenters || inc.segDividers)) {
       for (const g of segs) {
-        if (inc.segCenters) text(`${X(g.cx)}`, g.cx, h - fs * 1.9, { align: 'center', color: C.seg, fs: fs * 0.85 });
-        if (inc.segDividers && g.i > 0) text(`${X(g.x0)}`, g.x0, ly + fs * 0.6, { align: 'center', color: C.seg, fs: fs * 0.75 });
+        if (inc.segCenters) text(custom ? `${X(g.cx)}, ${Y(g.cy)}` : `${X(g.cx)}`, g.cx, Math.min(h, g.y1) - fs * 1.9, { align: 'center', color: C.seg, fs: fs * 0.85 });
+        if (inc.segDividers && !custom && g.i > 0) text(`${X(g.x0)}`, g.x0, ly + fs * 0.6, { align: 'center', color: C.seg, fs: fs * 0.75 });
       }
     }
   }
-
+  // custom segment names + left edge, at the top of each segment
+  if (custom && inc.segDividers && (inc.labels || inc.coordLabels)) {
+    for (const g of segs) {
+      const t = [inc.labels ? g.name : '', inc.labels ? `${F(g.w)}×${F(g.h)}` : '', inc.coordLabels ? `x ${X(g.x0)}` : ''].filter(Boolean).join('  ');
+      text(t, g.x0 + fs * 0.5, Math.max(0, g.y0) + (g.x0 < fs * 2 ? ly + fs * 1.1 : fs * 1.8), { color: C.seg, fs: fs * 0.85, bold: true });
+    }
+  }
   // Interactive overlays (preview only)
   if (o.snapLines && o.snapLines.length) {
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = u * 1.5; ctx.setLineDash([u * 4, u * 3]); glow('#ffffff');
@@ -169,7 +218,7 @@ export function drawOverview(ctx, job, o) {
   for (const s of job.screens) {
     const on = s.id === o.selectedId;
     ctx.save(); ctx.translate(s.x, s.y);
-    drawScreen(ctx, s, { u, lw: 1, inc: { bg: true, outline: false, crosshair: true, centerLines: false, thirds: false, grid: false, segDividers: true, segCenters: false, segGuides: false, boxes: true, labels: false, coordLabels: false },
+    drawScreen(ctx, s, { u, lw: 1, inc: { bg: true, outline: false, crosshair: true, centerLines: false, thirds: false, grid: false, segDividers: true, segCenters: false, segGuides: false, boxes: true, labels: false, coordLabels: false, unused: true },
       colors: { bg: on ? '#0c2236' : '#0a1626', line: '#00e5ff', seg: '#ffb020', box: '#ff3df2', text: '#d8f6ff' }, boxOwnColors: true, fs: 11 * u });
     ctx.strokeStyle = on ? '#00e5ff' : 'rgba(0,229,255,0.45)'; ctx.lineWidth = u * (on ? 2.5 : 1.2);
     if (on) { ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 10; }

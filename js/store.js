@@ -16,7 +16,7 @@ export const BOX_COLORS = ['#ff3df2', '#00e5ff', '#ffb020', '#14f1c6', '#8b7bff'
 export function defaultExport() {
   return {
     inc: { bg: true, outline: true, crosshair: true, centerLines: true, thirds: true, grid: false, segDividers: true,
-      segCenters: true, segGuides: false, boxes: true, labels: true, coordLabels: true, panelLabels: false },
+      segCenters: true, segGuides: false, boxes: true, labels: true, coordLabels: true, panelLabels: false, unused: true },
     bg: '#0b1220', line: '#00e5ff', seg: '#ffb020', box: '#ff3df2', text: '#ffffff',
     lw: 2, textSize: 0, boxOwnColors: true,
   };
@@ -25,7 +25,7 @@ export function defaultView() {
   return { center: true, centerLines: true, thirds: true, grid: true, segments: true, segGuides: true, boxes: true, labels: true, snap: true };
 }
 export function makeScreen(name, w, h, segments = 1) {
-  return { id: uid('scr'), name, w, h, segments, x: 0, y: 0, grid: { mode: 'off', cols: 4, rows: 4, step: 256, panelW: 500, panelH: 500 }, boxes: [] };
+  return { id: uid('scr'), name, w, h, segments, segMode: 'equal', segs: [], physUnit: 'ft', pptCur: null, x: 0, y: 0, grid: { mode: 'off', cols: 4, rows: 4, step: 256, panelW: 500, panelH: 500 }, boxes: [] };
 }
 export function autoPlace(job, align = 'top') {
   let x = 0; const maxH = Math.max(...job.screens.map(s => s.h), 0);
@@ -49,6 +49,18 @@ export function emptyJob(name) {
   const s = makeScreen('Screen 1', 1920, 1080);
   return { id: newJobId(), name, mode: 'screen', origin: 'tl', created: Date.now(), updated: Date.now(), screens: [s], currentScreenId: s.id, view: defaultView(), exportSettings: defaultExport() };
 }
+function sanitizeSegs(s, freshIds) {
+  const H = Math.round(num(s.h, 1080, 1, 65536)), pos = v => (Number.isFinite(+v) && +v > 0 ? Math.min(1e5, +v) : null);
+  const segs = (Array.isArray(s.segs) ? s.segs : []).slice(0, 256).map((g, k) => ({
+    id: freshIds || !g.id ? uid('seg') : String(g.id), name: str(g.name, `Seg ${k + 1}`),
+    x: Math.round(num(g.x, 0, -65536, 131072)), y: Math.round(num(g.y, 0, -65536, 131072)),
+    w: Math.round(num(g.w, 1920, 1, 65536)), h: Math.round(num(g.h, H, 1, 65536)),
+    pw: pos(g.pw), ph: pos(g.ph),   // optional physical size (physUnit) → pixel pitch
+  }));
+  const custom = s.segMode === 'custom' && segs.length > 0;
+  const pc = s.pptCur && typeof s.pptCur === 'object' && pos(s.pptCur.w) && pos(s.pptCur.h) ? { w: pos(s.pptCur.w), h: pos(s.pptCur.h), unit: s.pptCur.unit === 'cm' ? 'cm' : 'in' } : null;
+  return { segments: custom ? segs.length : Math.round(num(s.segments, 1, 1, 256)), segMode: custom ? 'custom' : 'equal', segs, physUnit: s.physUnit === 'm' ? 'm' : 'ft', pptCur: pc };
+}
 const num = (v, d, min = -1e7, max = 1e7) => { v = +v; return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : d; };
 const str = (v, d) => (typeof v === 'string' && v.trim() ? v.slice(0, 120) : d);
 const col = (v, d) => (/^#[0-9a-f]{6}$/i.test(v) ? v : d);
@@ -67,7 +79,9 @@ export function sanitizeJob(j, freshIds = false) {
     screens: j.screens.slice(0, 200).map((s, i) => ({
       id: freshIds || !s.id ? uid('scr') : String(s.id), name: str(s.name, `Screen ${i + 1}`),
       w: Math.round(num(s.w, 1920, 1, 65536)), h: Math.round(num(s.h, 1080, 1, 65536)),
-      segments: Math.round(num(s.segments, 1, 1, 256)), x: Math.round(num(s.x, 0)), y: Math.round(num(s.y, 0)),
+      // v1.4: segMode 'equal' (legacy `segments: N` = N equal slices, unchanged) or 'custom' (explicit rects in `segs`).
+      // `segments` always mirrors the segment count so older app versions still show the right number of slices.
+      ...sanitizeSegs(s, freshIds), x: Math.round(num(s.x, 0)), y: Math.round(num(s.y, 0)),
       grid: { mode: ['off', 'nm', 'px', 'led192', 'led384', 'panel'].includes((s.grid || {}).mode) ? s.grid.mode : 'off',
         panelW: Math.round(num((s.grid || {}).panelW, 500, 1, 65536)), panelH: Math.round(num((s.grid || {}).panelH, 500, 1, 65536)), cols: Math.round(num((s.grid || {}).cols, 4, 1, 500)),
         rows: Math.round(num((s.grid || {}).rows, 4, 1, 500)), step: num((s.grid || {}).step, 256, 1, 65536) },

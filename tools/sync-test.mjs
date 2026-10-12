@@ -123,6 +123,19 @@ const carolRows = [...backend.rows.values()].filter(r => r.owner !== backend.use
 ok(!(await names(C.page)).includes('Arena'), 'other account does not receive Don\'s jobs');
 ok(carolRows.length === 1 && carolRows[0].id !== idA && carolRows[0].name === 'Carol job', 'id collision with another account → re-keyed and uploaded');
 
+// v1.4: custom segments (+ physical size + current slide size) sync between devices without loss
+await B.page.evaluate(() => { const j = __pm.S.jobs.find(x => x.name === 'HL final' || x.screens.length === 4) || __pm.job(); __pm.S.currentJobId = j.id;
+  const s = j.screens[0]; s.w = 11344; s.h = 1080; s.segMode = 'custom'; s.physUnit = 'ft'; s.pptCur = { w: 55.561, h: 5.28, unit: 'in' };
+  s.segs = [{ id: 'seg_l', name: 'Left', x: 0, y: 0, w: 3510, h: 1080, pw: 52, ph: 16 }, { id: 'seg_c', name: 'Center', x: 3510, y: 0, w: 4320, h: 1080, pw: 66, ph: 16 }, { id: 'seg_r', name: 'Right', x: 7830, y: 0, w: 3510, h: 1080, pw: 52, ph: 16 }];
+  s.segments = 3; j.updated = Date.now(); __pm.render(); });
+await syncNow(B.page); await syncNow(A.page);
+const segA = await A.page.evaluate(id => { const j = __pm.S.jobs.find(x => x.id === id); const s = j && j.screens[0]; return s && { mode: s.segMode, n: s.segments, segs: s.segs.map(g => [g.name, g.x, g.w, g.h, g.pw, g.ph]), cur: s.pptCur, fit: __pm.G.segFit(s).badge }; }, idA);
+ok(segA && segA.mode === 'custom' && segA.n === 3 && JSON.stringify(segA.segs) === JSON.stringify([['Left', 0, 3510, 1080, 52, 16], ['Center', 3510, 4320, 1080, 66, 16], ['Right', 7830, 3510, 1080, 52, 16]]) && segA.cur && segA.cur.w === 55.561,
+  'custom segments + physical size + current slide size sync B → A intact ' + JSON.stringify(segA));
+ok(segA && segA.fit === '4 px short', 'synced job shows the fit warning on A (' + (segA && segA.fit) + ')');
+const remoteSeg = [...backend.rows.values()].find(r => r.id === idA).data.screens[0];
+ok(remoteSeg.segMode === 'custom' && remoteSeg.segs.length === 3 && remoteSeg.segments === 3, 'server row stores segMode/segs and mirrors segments = 3 for older app versions');
+
 // sign out keeps local data
 await A.page.locator('#syncBtn').click(); await A.page.locator('[data-act=signOut]').click(); await sleep(200);
 ok((await st(A.page)) === 'signedout' && (await names(A.page)).length >= 1, 'sign out keeps jobs on device');

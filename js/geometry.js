@@ -24,16 +24,161 @@ export function aspect(w, h) {
   return { num: Math.round(w / g), den: Math.round(h / g), dec, text: `${Math.round(w / g)}:${Math.round(h / g)}`, decText: `${dec.toFixed(2)}:1` };
 }
 
-export function segCount(s) { return Math.max(1, Math.min(256, Math.floor(+s.segments || 1))); }
+/** Custom (explicit) segments? Old jobs have only `segments: N` → equal split (migrated as segMode 'equal'). */
+export const isCustomSegs = s => s.segMode === 'custom' && Array.isArray(s.segs) && s.segs.length > 0;
+/** Number of segments (custom list length, or N equal). */
+export function segCount(s) { return isCustomSegs(s) ? s.segs.length : Math.max(1, Math.min(256, Math.floor(+s.segments || 1))); }
+/** Draw / list segments? Equal split: only when N > 1. Custom: always (even a single segment that doesn't fill). */
+export const hasSegs = s => isCustomSegs(s) || segCount(s) > 1;
 
-/** Equal vertical segments; all coordinates are relative to the WHOLE screen. */
+function segRect(i, name, x, y, w, h, custom, id) {
+  return { i, n: i + 1, id, name, custom, x0: x, x1: x + w, y0: y, y1: y + h, w, h, cx: x + w / 2, cy: y + h / 2,
+    thirds: [x + w / 3, x + 2 * w / 3], thirdsY: [y + h / 3, y + 2 * h / 3] };
+}
+/** Segment rects. All coordinates are relative to the WHOLE screen (top-left based, Y down).
+ *  Equal mode: N equal vertical slices (fractional widths kept exact). Custom: each {name,x,y,w,h}. */
 export function segments(s) {
+  if (isCustomSegs(s)) return s.segs.map((g, i) => segRect(i, g.name || `Seg ${i + 1}`, +g.x || 0, +g.y || 0, Math.max(1, +g.w || 1), Math.max(1, +g.h || 1), true, g.id));
   const n = segCount(s), sw = s.w / n, out = [];
-  for (let i = 0; i < n; i++) {
-    const x0 = i * sw, x1 = (i + 1) * sw;
-    out.push({ i, n: i + 1, x0, x1, w: sw, h: s.h, cx: x0 + sw / 2, cy: s.h / 2, thirds: [x0 + sw / 3, x0 + 2 * sw / 3] });
-  }
+  for (let i = 0; i < n; i++) out.push(segRect(i, `Seg ${i + 1}`, i * sw, 0, sw, s.h, false));
   return out;
+}
+/** N whole-pixel segments that exactly cover W (extra pixels go to the leftmost segments): 11344/3 → 3782,3781,3781. */
+export function splitEqualInt(W, H, n, names = []) {
+  n = Math.max(1, Math.min(256, Math.floor(n) || 1));
+  const base = Math.floor(W / n), extra = W - base * n, out = []; let x = 0;
+  for (let i = 0; i < n; i++) { const w = base + (i < extra ? 1 : 0); out.push({ name: names[i] || `Seg ${i + 1}`, x, y: 0, w, h: H }); x += w; }
+  return out;
+}
+/** Re-place segments left → right in list order (top-aligned unless align given), with an optional gap (px, may be negative = overlap). */
+export function autoPlaceSegs(segs, gap = 0, H = null, align = 'top') {
+  let x = 0;
+  for (const g of segs) {
+    g.x = x; x += g.w + gap;
+    g.y = H == null || align === 'top' ? 0 : align === 'middle' ? Math.round((H - g.h) / 2) : H - g.h;
+  }
+  return segs;
+}
+
+const iv = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0);   // overlap length (≤0 = none)
+/** Uncovered parts of [0,W]×[0,H] given rects (coordinate compression, merged into rectangles). */
+export function uncovered(W, H, rects, vertical = false) {
+  if (vertical) return uncovered(H, W, rects.map(r => ({ x0: r.y0, x1: r.y1, y0: r.x0, y1: r.x1 })))
+    .map(r => ({ x0: r.y0, x1: r.y1, y0: r.x0, y1: r.x1, w: r.h, h: r.w })).sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
+  const cl = rects.map(r => ({ x0: Math.max(0, r.x0), x1: Math.min(W, r.x1), y0: Math.max(0, r.y0), y1: Math.min(H, r.y1) })).filter(r => r.x1 > r.x0 && r.y1 > r.y0);
+  const xs = [...new Set([0, W, ...cl.flatMap(r => [r.x0, r.x1])])].sort((a, b) => a - b);
+  const ys = [...new Set([0, H, ...cl.flatMap(r => [r.y0, r.y1])])].sort((a, b) => a - b);
+  let open = [], out = [];   // open: rects being extended downward
+  for (let j = 0; j < ys.length - 1; j++) {
+    const y0 = ys[j], y1 = ys[j + 1], my = (y0 + y1) / 2, runs = [];
+    for (let i = 0; i < xs.length - 1; i++) {
+      const mx = (xs[i] + xs[i + 1]) / 2;
+      if (!cl.some(r => mx > r.x0 && mx < r.x1 && my > r.y0 && my < r.y1)) {
+        const last = runs[runs.length - 1];
+        if (last && last.x1 === xs[i]) last.x1 = xs[i + 1]; else runs.push({ x0: xs[i], x1: xs[i + 1] });
+      }
+    }
+    const next = [];
+    for (const rn of runs) {
+      const o = open.find(r => r.x0 === rn.x0 && r.x1 === rn.x1 && r.y1 === y0);
+      if (o) { o.y1 = y1; next.push(o); } else next.push({ x0: rn.x0, x1: rn.x1, y0, y1 });
+    }
+    for (const o of open) if (!next.includes(o)) out.push(o);
+    open = next;
+  }
+  out.push(...open);
+  return out.map(r => ({ ...r, w: r.x1 - r.x0, h: r.y1 - r.y0 })).sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
+}
+
+/**
+ * Do the segments exactly fill the screen? Returns
+ * { level: 'ok'|'warn'|'error', exact, issues: [{level,text}], unused: [rects], overlaps: [rects + a,b], outside: [...],
+ *   layout: 'row'|'column'|'free', totalW, totalH, unusedPx, badge }.
+ * Equal-split screens always fill exactly (level 'ok'). Unused space = 'warn' (amber); overlaps / past the edge = 'error' (red).
+ */
+export function segFit(s) {
+  const W = s.w, H = s.h, segs = segments(s);
+  const res = { level: 'ok', exact: true, issues: [], unused: [], overlaps: [], outside: [], layout: 'row', totalW: W, totalH: H, unusedPx: 0, badge: '' };
+  if (!isCustomSegs(s)) return res;
+  const add = (level, text) => { res.issues.push({ level, text }); if (level === 'error' || res.level === 'ok') res.level = level; };
+  const nm = g => g.name || `Seg ${g.n}`;
+  // layout: a single row (every pair shares some height) or a single column
+  const pairs = []; for (let a = 0; a < segs.length; a++) for (let b = a + 1; b < segs.length; b++) pairs.push([segs[a], segs[b]]);
+  const row = pairs.every(([a, b]) => iv(a.y0, a.y1, b.y0, b.y1) > 0), col = !row && pairs.every(([a, b]) => iv(a.x0, a.x1, b.x0, b.x1) > 0);
+  res.layout = row ? 'row' : col ? 'column' : 'free';
+  res.totalW = segs.reduce((t, g) => t + g.w, 0); res.totalH = segs.reduce((t, g) => t + g.h, 0);
+  if (row) {
+    const d = W - res.totalW;
+    if (d !== 0) { add('warn', `Segments total ${fmt1(res.totalW)} px wide; screen is ${W} px — ${d > 0 ? `${fmt1(d)} px short` : `${fmt1(-d)} px too wide`}.`); res.widthIssue = res.issues[res.issues.length - 1]; }
+    for (const g of segs) if (g.h !== H) add('warn', `${nm(g)} is ${fmt1(g.h)} px tall; screen is ${H} px (${g.h < H ? `${fmt1(H - g.h)} px short` : `${fmt1(g.h - H)} px too tall`}).`);
+  } else if (col) {
+    const d = H - res.totalH;
+    if (d !== 0) add('warn', `Segments total ${fmt1(res.totalH)} px tall; screen is ${H} px — ${d > 0 ? `${fmt1(d)} px short` : `${fmt1(-d)} px too tall`}.`);
+    for (const g of segs) if (g.w !== W) add('warn', `${nm(g)} is ${fmt1(g.w)} px wide; screen is ${W} px (${g.w < W ? `${fmt1(W - g.w)} px short` : `${fmt1(g.w - W)} px too wide`}).`);
+  }
+  // past the screen edges
+  for (const g of segs) {
+    const L = Math.max(0, -g.x0), R = Math.max(0, g.x1 - W), T = Math.max(0, -g.y0), B = Math.max(0, g.y1 - H);
+    if (L || R || T || B) {
+      const parts = [R && `${fmt1(R)} px past the right edge`, L && `${fmt1(L)} px past the left edge`, B && `${fmt1(B)} px past the bottom`, T && `${fmt1(T)} px past the top`].filter(Boolean);
+      const off = iv(g.x0, g.x1, 0, W) <= 0 || iv(g.y0, g.y1, 0, H) <= 0;
+      res.outside.push({ seg: g, L, R, T, B, off });
+      add('error', off ? `${nm(g)} is completely off the screen.` : `${nm(g)} extends ${parts.join(', ')}.`);
+    }
+  }
+  // overlaps
+  for (const [a, b] of pairs) {
+    const ow = iv(a.x0, a.x1, b.x0, b.x1), oh = iv(a.y0, a.y1, b.y0, b.y1);
+    if (ow > 0 && oh > 0) {
+      const r = { a, b, x0: Math.max(a.x0, b.x0), x1: Math.min(a.x1, b.x1), y0: Math.max(a.y0, b.y0), y1: Math.min(a.y1, b.y1), w: ow, h: oh };
+      res.overlaps.push(r);
+      add('error', `${nm(a)} and ${nm(b)} overlap by ${fmt1(ow)} × ${fmt1(oh)} px (x ${fmt1(r.x0)}–${fmt1(r.x1)}${oh < H ? `, y ${fmt1(r.y0)}–${fmt1(r.y1)}` : ''}).`);
+    }
+  }
+  // unused areas (described with where they are)
+  res.unused = uncovered(W, H, segs, row);   // row layout → describe gaps as vertical strips
+  for (const u of res.unused) {
+    const left = segs.find(g => g.x1 === u.x0 && iv(g.y0, g.y1, u.y0, u.y1) > 0), right = segs.find(g => g.x0 === u.x1 && iv(g.y0, g.y1, u.y0, u.y1) > 0);
+    const above = segs.find(g => g.y1 === u.y0 && iv(g.x0, g.x1, u.x0, u.x1) > 0);
+    let where;
+    if (u.w === W && u.h === H) where = 'the whole screen';
+    else if (u.h === H || (u.y0 === 0 && u.y1 === H)) where = u.x0 === 0 ? 'on the left' : u.x1 === W ? 'on the right' : left && right ? `between ${nm(left)} and ${nm(right)}` : 'in the middle';
+    else if (u.w === W) where = u.y0 === 0 ? 'along the top' : u.y1 === H ? 'along the bottom' : 'across the middle';
+    else if (above && u.y1 === H) where = `below ${nm(above)}`;
+    else if (left && right) where = `between ${nm(left)} and ${nm(right)}`;
+    else where = `${u.y0 === 0 ? 'top' : u.y1 === H ? 'bottom' : 'middle'}-${u.x0 === 0 ? 'left' : u.x1 === W ? 'right' : 'middle'}`;
+    u.where = where; res.unusedPx += u.w * u.h;
+    add('warn', `${fmt1(u.w)} × ${fmt1(u.h)} px unused ${where} (x ${fmt1(u.x0)}–${fmt1(u.x1)}, y ${fmt1(u.y0)}–${fmt1(u.y1)}).`);
+  }
+  // say where the missing width went, e.g. "… 4 px short (4 px unused on the right)."
+  if (res.widthIssue) {
+    const strips = res.unused.filter(u => u.h === H);
+    if (strips.length) res.widthIssue.text = res.widthIssue.text.replace(/\.$/, ` (${strips.map(u => `${fmt1(u.w)} px unused ${u.where}`).join(', ')}).`);
+    delete res.widthIssue;
+  }
+  res.exact = res.level === 'ok';
+  if (!res.exact) {
+    const bits = [], dW = W - res.totalW, dH = H - res.totalH;
+    if (row && dW) bits.push(`${fmt1(Math.abs(dW))} px ${dW > 0 ? 'short' : 'too wide'}`);
+    if (col && dH) bits.push(`${fmt1(Math.abs(dH))} px ${dH > 0 ? 'short' : 'too tall'}`);
+    if ((row && segs.some(g => g.h !== H)) || (col && segs.some(g => g.w !== W))) bits.push(row ? 'height mismatch' : 'width mismatch');
+    if (!bits.length && res.unused.length) bits.push(res.unused.length === 1 ? `${fmt1(res.unused[0].w)}×${fmt1(res.unused[0].h)} unused` : `${res.unused.length} unused areas`);
+    if (res.overlaps.length) bits.push(`${res.overlaps.length} overlap${res.overlaps.length > 1 ? 's' : ''}`);
+    if (res.outside.length) bits.push(`${res.outside.length} past edge`);
+    res.badge = bits.join(' · ');
+  }
+  return res;
+}
+
+/** Physical size → pixel density. unit 'ft' | 'm'. pw/ph = physical width/height of a w×h px segment. */
+export const MM_PER = { ft: 304.8, m: 1000 };
+export function physInfo(w, h, pw, ph, unit = 'ft') {
+  if (!(pw > 0) && !(ph > 0)) return null;
+  const mm = MM_PER[unit] || 304.8, o = { unit };
+  if (pw > 0) { o.pxPerUnitW = w / pw; o.pitchW = pw * mm / w; }
+  if (ph > 0) { o.pxPerUnitH = h / ph; o.pitchH = ph * mm / h; }
+  o.square = o.pitchW && o.pitchH ? Math.abs(o.pitchW / o.pitchH - 1) < 0.01 : null;   // within 1 %
+  return o;
 }
 
 /** Panel-grid presets (W×H px). */
@@ -94,7 +239,7 @@ export function keyRows(s) {
   P('Thirds', '⅓ × ⅓ (TL)', w / 3, h / 3); P('Thirds', '⅔ × ⅓ (TR)', 2 * w / 3, h / 3);
   P('Thirds', '⅓ × ⅔ (BL)', w / 3, 2 * h / 3); P('Thirds', '⅔ × ⅔ (BR)', 2 * w / 3, 2 * h / 3);
   const segs = segments(s);
-  if (segs.length > 1) {
+  if (hasSegs(s) && !isCustomSegs(s)) {
     for (let i = 1; i < segs.length; i++) P('Segment boundaries', `Seg ${i} | Seg ${i + 1}`, segs[i].x0, null);
     for (const g of segs) {
       const grp = `Segment ${g.n} (${fmt1(g.x0)}–${fmt1(g.x1)})`;
@@ -102,6 +247,16 @@ export function keyRows(s) {
       P(grp, 'Left edge', g.x0, null); P(grp, 'Right edge', g.x1, null);
       P(grp, 'Thirds ⅓ / ⅔', g.thirds[0], null); rows[rows.length - 1].x2 = g.thirds[1];
       P(grp, 'Top-center', g.cx, 0); P(grp, 'Bottom-center', g.cx, h);
+    }
+  } else if (isCustomSegs(s)) {
+    for (const g of segs) {
+      const grp = `Segment ${g.n} · ${g.name} ${fmt1(g.w)}×${fmt1(g.h)} (x ${fmt1(g.x0)}–${fmt1(g.x1)})`;
+      P(grp, 'Center', g.cx, g.cy);
+      P(grp, 'Top-left', g.x0, g.y0); P(grp, 'Bottom-right', g.x1, g.y1);
+      P(grp, 'Left edge', g.x0, null); P(grp, 'Right edge', g.x1, null);
+      if (g.y0 !== 0 || g.y1 !== h) { P(grp, 'Top edge', null, g.y0); P(grp, 'Bottom edge', null, g.y1); }
+      P(grp, 'Thirds ⅓ / ⅔', g.thirds[0], null); rows[rows.length - 1].x2 = g.thirds[1];
+      P(grp, 'Top-center', g.cx, g.y0); P(grp, 'Bottom-center', g.cx, g.y1);
     }
   }
   const gl = gridLines(s);
@@ -127,7 +282,7 @@ export function snapTargets(s, opts = {}) {
   const xs = [0, s.w, s.w / 2, s.w / 3, 2 * s.w / 3];
   const ys = [0, s.h, s.h / 2, s.h / 3, 2 * s.h / 3];
   const segs = segments(s);
-  if (segs.length > 1) for (const g of segs) { xs.push(g.x0, g.cx, g.x1); }
+  if (hasSegs(s)) for (const g of segs) { xs.push(g.x0, g.cx, g.x1); if (g.custom) ys.push(g.y0, g.cy, g.y1); }
   if (opts.grid) { const gl = gridLines(s); if (gl) { xs.push(...gl.xs); ys.push(...gl.ys); } }
   for (const b of (s.boxes || [])) {
     if (b.id === opts.excludeId) continue;

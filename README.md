@@ -13,8 +13,27 @@ Plain HTML/CSS/JS, no build step. Deploy the static files (index.html, manifest.
 - Coordinates: pixel edges, 0 → W (a full-width box is x=0, w=W; last pixel column is W−1).
   Fractional values show 1 decimal plus ≈ rounded whole px (half rounds up); tap-to-copy copies the rounded value.
   PiP boxes always use whole pixels.
-- Tests: `node tools/test-geometry.mjs` (math); `node tools/browser-test.mjs` (headless iPad/iPhone checks, needs playwright + a local server). Icons: `node tools/make-icons.mjs` (needs playwright).
+- Tests: `node tools/test-geometry.mjs` + `node tools/test-segments.mjs` (math); `node tools/browser-test.mjs` (headless iPad/iPhone checks, needs playwright + a local server). Icons: `node tools/make-icons.mjs` (needs playwright).
 - Updating: bump `VERSION` in sw.js when you change files so installed copies refresh.
+
+## Segments, fit check, Slides (v1.4)
+- **Segments** (Screen tab): *Equal split* (N equal slices — what every pre-1.4 job has; `segments: N` loads unchanged as `segMode: 'equal'`)
+  or *Custom sizes*: per segment name, W×H px, X/Y offset from the screen's top-left, optional physical W×H (feet / meters → px per ft/m and
+  mm pitch, flags non-square pitch). Add / remove / reorder, *Split into N equal* (whole px, exact fill), *Auto-place L→R* with optional gap.
+  Switching to Custom starts from the current equal split; switching back keeps the custom list. `segments` always mirrors the count so
+  older app versions still show the right number of slices (they can't show custom sizes — update every device).
+  Dividers/outlines, centers, guides, Coords readouts, snapping, PiP *Center in seg* / *Fit seg*, Ratios fit and PNG export use the real rects.
+- **Fit check**: custom segments that don't exactly fill the screen get an amber badge (screen list, canvas, Coords/Screen tabs) with
+  specifics (total width vs screen, per-segment height, unused areas + where); overlaps and segments past an edge are red.
+  Unused areas are hatched on the canvas and (checkbox *Unused / overlap areas*) in PNG exports.
+- **Slides** tab (`js/slides.js`, sources in its header): PowerPoint slide size (96 px = 1 in; 1–56 in per side) — 1:1 when it fits, otherwise
+  ★ *1/N exact* (Windows `ExportBitmapResolution` = 96·N dpi gives native pixels; e.g. 11344×1080 → 39.389 × 3.75 in, 288 dpi) and
+  *Largest* (56 in side, e.g. 56 × 5.331 in; needs 202.571 dpi which the registry can't take). Mac: File ▸ Export ▸ PNG width = native.
+  Where each segment / PiP lands (Left/Top/Width/Height in in or cm, + pt, px), your current slide size vs the screen (aspect mismatch,
+  bars, matching sizes, positions on your slide), Keynote size in pt (1 pt = 1 slide px; reported max 8192). Copy buttons, TXT / CSV
+  summary, and a .pptx template (PptxGenJS 4.0.1 vendored, MIT) with the slide size and labeled guide rectangles.
+- Tests: `node tools/test-segments.mjs` (segment / fit / migration / slide math) and `node tools/segments-test.mjs` (iPad / iPhone / desktop
+  browser checks, .pptx XML check, optional LibreOffice render; writes `screenshots/*segments*`, `*slides*`, `template-example-*`).
 
 ## Cloud sync (Supabase, optional)
 - Configure in `js/config.js` (`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`). Empty key → sync UI hidden, nothing loaded, app is 100% local.

@@ -3,6 +3,8 @@ import * as G from './geometry.js';
 import * as Store from './store.js';
 import { drawScreen, drawOverview, canvasBounds, handlePoints, screenToBlob } from './render.js';
 import { createSync, syncConfigured } from './sync.js';
+import * as SL from './slides.js';
+import { buildPptx } from './pptx.js';
 import * as CFG from './config.js';   // namespace import: an older config.js without ALLOW_SIGNUP still loads
 const ALLOW_SIGNUP = CFG.ALLOW_SIGNUP === true;
 
@@ -60,12 +62,13 @@ function renderScreens() {
   $('#screens').innerHTML = `
     <div class="pane-h"><span>SCREENS</span><button class="btn sm ghost" data-act="addScreen">＋ Add</button></div>
     <div class="scr-list">${j.screens.map((s, i) => {
-      const a = G.aspect(s.w, s.h), n = G.segCount(s);
+      const a = G.aspect(s.w, s.h), n = G.segCount(s), fit = G.segFit(s);
       return `<button class="scr-card ${s.id === cur.id ? 'on' : ''}" data-act="pickScreen" data-id="${s.id}">
         <span class="scr-idx">${String(i + 1).padStart(2, '0')}</span>
         <span class="scr-name">${esc(s.name)}</span>
         <span class="scr-res">${s.w}×${s.h}</span>
-        <span class="scr-meta">${a.text} · ${a.decText}${n > 1 ? ` · <b>${n} seg</b>` : ''}${s.boxes.length ? ` · ${s.boxes.length} box` : ''}${gl ? `<br><i>@ ${s.x}, ${s.y}</i>` : ''}</span>
+        <span class="scr-meta">${a.text} · ${a.decText}${G.hasSegs(s) ? ` · <b>${n} seg${G.isCustomSegs(s) ? ' custom' : ''}</b>` : ''}${s.boxes.length ? ` · ${s.boxes.length} box` : ''}${gl ? `<br><i>@ ${s.x}, ${s.y}</i>` : ''}</span>
+        ${fit.exact ? '' : `<span class="fitbadge ${fit.level}" title="${esc(fit.issues.map(i => i.text).join('\n'))}">⚠ ${esc(fit.badge)}</span>`}
       </button>`;
     }).join('')}</div>
     ${gl ? `<div class="pane-f">
@@ -95,12 +98,12 @@ function renderStatus() {
 }
 
 // ---------- panel ----------
-const TABS = [['coords', 'Coords'], ['boxes', 'PiP Boxes'], ['ratios', 'Ratios'], ['screen', 'Screen'], ['export', 'Export']];
+const TABS = [['coords', 'Coords'], ['boxes', 'PiP Boxes'], ['ratios', 'Ratios'], ['screen', 'Screen'], ['slides', 'Slides'], ['export', 'Export']];
 function renderPanel() {
   $('#tabs').innerHTML = TABS.map(([k, l]) => `<button class="tab ${ui.tab === k ? 'on' : ''}" data-act="tab" data-tab="${k}">${l}</button>`).join('');
   const active = document.activeElement, fid = active && active.dataset ? active.dataset.f : null;
   const body = $('#panelBody'), scrollTop = body.scrollTop;
-  body.innerHTML = ({ coords: panelCoords, boxes: panelBoxes, ratios: panelRatios, screen: panelScreen, export: panelExport })[ui.tab]();
+  body.innerHTML = ({ coords: panelCoords, boxes: panelBoxes, ratios: panelRatios, screen: panelScreen, slides: panelSlides, export: panelExport })[ui.tab]();
   body.scrollTop = scrollTop;
   if (fid) { const el = body.querySelector(`[data-f="${fid}"]`); if (el && el !== active) { el.focus({ preventScroll: true }); try { el.select && el.select(); } catch { } } }
   if (ui.tab === 'export') renderExportResults();
@@ -110,7 +113,19 @@ function aspectBlock(s) {
   const a = G.aspect(s.w, s.h);
   return `<div class="hud-stat"><div><div class="lbl">RESOLUTION</div><div class="big">${s.w}<i>×</i>${s.h}</div></div>
     <div><div class="lbl">ASPECT</div><div class="big">${a.text}</div><div class="sub">${a.decText}</div></div>
-    ${G.segCount(s) > 1 ? `<div><div class="lbl">SEGMENTS</div><div class="big amber">${G.segCount(s)}</div><div class="sub">${F(s.w / G.segCount(s))}×${s.h} each</div></div>` : ''}</div>`;
+    ${G.hasSegs(s) ? `<div><div class="lbl">SEGMENTS</div><div class="big amber">${G.segCount(s)}</div><div class="sub">${G.isCustomSegs(s) ? 'custom' : `${F(s.w / G.segCount(s))}×${s.h} each`}</div></div>` : ''}</div>
+    ${fitBlock(s)}`;
+}
+
+/** Fit warning card (custom segments that don't exactly fill the screen). */
+function fitBlock(s, full = false) {
+  const f = G.segFit(s);
+  if (!G.isCustomSegs(s)) return '';
+  if (f.exact) return full ? `<p class="fitok">✓ Segments fill the screen exactly (${G.segments(s).map(g => g.w).join(' + ')} = ${s.w} px).</p>` : '';
+  const list = full ? f.issues : f.issues.slice(0, 3);
+  return `<div class="fitwarn ${f.level}"><div class="fw-h">⚠ SEGMENTS DON'T ${f.level === 'error' ? 'FIT' : 'FILL'} THE SCREEN <span>${esc(f.badge)}</span></div>
+    <ul>${list.map(i => `<li class="${i.level}">${esc(i.text)}</li>`).join('')}${!full && f.issues.length > 3 ? `<li>…${f.issues.length - 3} more in the Screen tab</li>` : ''}</ul>
+    ${full ? '<p class="hint">Unused areas are hatched amber on the canvas, overlaps red, edges a segment runs past get a red bar. Coordinates are still relative to the whole screen.</p>' : ''}</div>`;
 }
 
 function panelCoords() {
@@ -157,7 +172,7 @@ function numInput(f, v, label, extra = '') {
 }
 
 function panelBoxes() {
-  const s = scr(), b = box(), gl = isGlobal(), n = G.segCount(s);
+  const s = scr(), b = box(), gl = isGlobal(), n = G.hasSegs(s) ? 2 : 1;
   const am = ui.addMode || 'size';
   let html = `<div class="card"><div class="lbl">ADD PIP BOX</div>
     <div class="seg full">${[['size', 'W × H'], ['pct', 'Ratio · % W'], ['rw', 'Ratio · W'], ['rh', 'Ratio · H']].map(([k, l]) => `<button class="${am === k ? 'on' : ''}" data-act="addMode" data-m="${k}">${l}</button>`).join('')}</div>
@@ -192,7 +207,7 @@ function panelBoxes() {
         <div><span class="lbl">RATIO</span><span class="v">${a.text}</span><span class="r">${a.decText}</span></div>
       </div>
       <div class="row wrap"><button class="btn sm" data-act="center" data-a="h">↔ Center H</button><button class="btn sm" data-act="center" data-a="v">↕ Center V</button><button class="btn sm primary" data-act="center" data-a="both">✛ Center both</button></div>
-      ${n > 1 ? `<div class="row"><select class="inp grow" id="segPick">${G.segments(s).map(g => `<option value="${g.i}" ${ui.segPick == g.i ? 'selected' : ''}>Segment ${g.n} (${F(g.x0)}–${F(g.x1)})</option>`).join('')}</select>
+      ${n > 1 ? `<div class="row"><select class="inp grow" id="segPick">${G.segments(s).map(g => `<option value="${g.i}" ${ui.segPick == g.i ? 'selected' : ''}>${g.custom ? esc(g.name) : `Segment ${g.n}`} (${F(g.x0)}–${F(g.x1)}${g.custom ? `, ${F(g.w)}×${F(g.h)}` : ''})</option>`).join('')}</select>
         <button class="btn sm" data-act="centerSeg">Center in seg</button><button class="btn sm" data-act="fitSeg">Fit seg</button></div>` : ''}
       <div class="row wrap"><button class="btn sm" data-act="copyBox">⧉ Copy X,Y,W,H</button><button class="btn sm" data-act="copyBoxCenter">⧉ Copy center</button><button class="btn sm" data-act="dupBox">Duplicate</button><button class="btn sm" data-act="frontBox">To front</button><button class="btn sm danger" data-act="delBox">Delete</button></div>
     </div>`;
@@ -214,18 +229,18 @@ function addDims() {
 }
 
 function panelRatios() {
-  const s = scr(), n = G.segCount(s), segs = G.segments(s);
-  const tgt = ui.ratioTarget ?? -1, area = tgt >= 0 && segs[tgt] ? segs[tgt] : { x0: 0, w: s.w, h: s.h };
+  const s = scr(), n = G.hasSegs(s) ? 2 : 1, segs = G.segments(s);
+  const tgt = ui.ratioTarget ?? -1, area = tgt >= 0 && segs[tgt] ? segs[tgt] : { x0: 0, y0: 0, w: s.w, h: s.h };
   const ratios = [['16:9', 16, 9], ['4:3', 4, 3], ['1:1', 1, 1], ['9:16', 9, 16]];
   const cr = G.parseRatio(ui.customRatio ?? '2.39:1'); if (cr) ratios.push([`Custom ${ui.customRatio ?? '2.39:1'}`, cr[0], cr[1]]);
   let html = aspectBlock(s);
   html += `<div class="card"><div class="lbl">LARGEST CENTERED FIT</div>
-    ${n > 1 ? `<label class="fld"><span>Fit inside</span><select class="inp" data-bind="ratioTarget"><option value="-1">Whole screen (${s.w}×${s.h})</option>${segs.map(g => `<option value="${g.i}" ${tgt == g.i ? 'selected' : ''}>Segment ${g.n} (${F(g.w)}×${s.h})</option>`).join('')}</select></label>` : ''}
+    ${n > 1 ? `<label class="fld"><span>Fit inside</span><select class="inp" data-bind="ratioTarget"><option value="-1">Whole screen (${s.w}×${s.h})</option>${segs.map(g => `<option value="${g.i}" ${tgt == g.i ? 'selected' : ''}>${g.custom ? esc(g.name) : `Segment ${g.n}`} (${F(g.w)}×${F(g.h)})</option>`).join('')}</select></label>` : ''}
     <label class="fld"><span>Custom ratio</span><input class="inp" data-f="customRatio" data-bind="customRatio" value="${esc(ui.customRatio ?? '2.39:1')}" placeholder="e.g. 2.39:1 or 5:4"></label>
     ${originHint(s)}<table class="ro fit"><thead><tr><th>Ratio</th><th>W×H</th><th>Top-left X, Y</th><th></th></tr></thead><tbody>`;
   for (const [label, rw, rh] of ratios) {
     const f = G.largestFit(area.w, area.h, rw, rh); if (!f) continue;
-    const x = area.x0 + f.x, y = f.y;
+    const x = area.x0 + f.x, y = area.y0 + f.y;
     html += `<tr><td><b>${esc(label)}</b></td><td data-act="copy" data-copy="${f.w}, ${f.h}"><span class="v">${f.w}×${f.h}</span></td>
       <td data-act="copy" data-copy="${G.rnd(OX(s, x))}, ${G.rnd(OY(s, y))}">${val(OX(s, x))} ${val(OY(s, y))}${isCtr() ? `<span class="r">center ${F(OX(s, x + f.w / 2))}, ${F(OY(s, y + f.h / 2))}</span>` : ''}</td>
       <td><button class="btn sm primary" data-act="addFit" data-w="${f.w}" data-h="${f.h}" data-x="${x}" data-y="${y}" data-n="${esc(label)}">＋ Box</button></td></tr>`;
@@ -238,10 +253,10 @@ function panelScreen() {
   const s = scr(), j = job(), gl = isGlobal(), g = s.grid, idx = j.screens.indexOf(s);
   return `${aspectBlock(s)}<div class="card">
     <label class="fld"><span>Screen name</span><input class="inp" data-f="scr.name" data-bind="scr.name" value="${esc(s.name)}"></label>
-    <div class="grid3">${numInput('scr.w', s.w, 'Width px', 'min="1"')}${numInput('scr.h', s.h, 'Height px', 'min="1"')}${numInput('scr.segments', G.segCount(s), 'Segments', 'min="1" max="256"')}</div>
-    ${G.segCount(s) > 1 && !G.isInt(s.w / G.segCount(s)) ? `<p class="warn">⚠ ${s.w} / ${G.segCount(s)} = ${F(s.w / G.segCount(s))} px — segments are not whole pixels.</p>` : ''}
+    <div class="grid2">${numInput('scr.w', s.w, 'Width px', 'min="1"')}${numInput('scr.h', s.h, 'Height px', 'min="1"')}</div>
     ${gl ? `<div class="lbl mt">GLOBAL CANVAS OFFSET</div><div class="grid2">${numInput('scr.x', s.x, 'Offset X')}${numInput('scr.y', s.y, 'Offset Y')}</div>` : ''}
   </div>
+  ${segEditor(s)}
   <div class="card"><div class="lbl">CUSTOM GRID</div>
     <div class="seg full wrap">${[['off', 'Off'], ['nm', 'N × M'], ['px', 'Every X px'], ['led192', 'LED 192×192'], ['led384', 'Double LED 192×384'], ['panel', 'Custom panel']].map(([k, l]) => `<button class="${g.mode === k ? 'on' : ''}" data-act="gridMode" data-m="${k}">${l}</button>`).join('')}</div>
     ${g.mode === 'panel' ? `<div class="grid2">${numInput('grid.panelW', g.panelW, 'Panel W px', 'min="1"')}${numInput('grid.panelH', g.panelH, 'Panel H px', 'min="1"')}</div>
@@ -254,8 +269,151 @@ function panelScreen() {
   <button class="btn sm" data-act="dupScreen">Duplicate</button><button class="btn sm danger" data-act="delScreen">Delete screen</button></div>`;
 }
 
+// ---------- segment editor (Screen tab) ----------
+function segEditor(s) {
+  const custom = G.isCustomSegs(s), n = G.segCount(s), U = s.physUnit || 'ft';
+  let html = `<div class="card seg-editor"><div class="row between"><div class="lbl">SEGMENTS</div>
+    <div class="seg mini">${[['equal', 'Equal split'], ['custom', 'Custom sizes']].map(([k, l]) => `<button class="${(custom ? 'custom' : 'equal') === k ? 'on' : ''}" data-act="segMode" data-m="${k}">${l}</button>`).join('')}</div></div>`;
+  if (!custom) {
+    html += `<div class="grid2">${numInput('scr.segments', G.segCount(s), 'Equal segments (N)', 'min="1" max="256"')}<div class="fld"><span>&nbsp;</span><p class="hint">${n > 1 ? `${F(s.w / n)}×${s.h} each` : 'Whole screen'}</p></div></div>
+      ${n > 1 && !G.isInt(s.w / n) ? `<p class="warn">⚠ ${s.w} / ${n} = ${F(s.w / n)} px — segments are not whole pixels.</p>` : ''}
+      <p class="hint">Equal split always fills the screen. Use <b>Custom sizes</b> when the real segments have their own widths/heights (they're filled in from this split so you can edit them).</p>`;
+    return html + '</div>';
+  }
+  const segs = G.segments(s);
+  html += `<p class="hint">Each segment: name, size and X/Y offset <b>from the screen's top-left</b> (px). Readouts in Coords use the job origin${isCtr() ? ' (center = 0,0)' : ''}. Physical size is optional → pixel pitch.</p>
+    <div class="seg-rows">${s.segs.map((g, i) => {
+      const pi = G.physInfo(g.w, g.h, g.pw, g.ph, U);
+      return `<div class="seg-row" data-i="${i}"><div class="row"><span class="seg-n">${i + 1}</span><input class="inp grow" data-f="seg.${i}.name" data-bind="seg.${i}.name" value="${esc(g.name)}" aria-label="Segment ${i + 1} name">
+        <button class="btn sm ghost" data-act="moveSeg" data-i="${i}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="btn sm ghost" data-act="moveSeg" data-i="${i}" data-d="1" ${i === s.segs.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button><button class="btn sm danger" data-act="delSeg" data-i="${i}" aria-label="Remove segment">✕</button></div>
+        <div class="grid4">${numInput(`seg.${i}.w`, g.w, 'W px', 'min="1"')}${numInput(`seg.${i}.h`, g.h, 'H px', 'min="1"')}${numInput(`seg.${i}.x`, g.x, 'X offset')}${numInput(`seg.${i}.y`, g.y, 'Y offset')}</div>
+        <div class="grid4 phys">${numInput(`seg.${i}.pw`, g.pw ?? '', `Phys W ${U}`, 'min="0" step="any" placeholder="opt."')}${numInput(`seg.${i}.ph`, g.ph ?? '', `Phys H ${U}`, 'min="0" step="any" placeholder="opt."')}
+          <div class="fld span2"><span>PIXEL DENSITY</span><p class="hint pitch">${pi ? pitchText(pi) : 'Enter the physical size to see px per ' + (U === 'ft' ? 'foot' : 'meter') + ' and pitch.'}</p></div></div>
+        <p class="hint seg-sum">x ${segs[i].x0}–${segs[i].x1} · y ${segs[i].y0}–${segs[i].y1} · center ${F(OX(s, segs[i].cx))}, ${F(OY(s, segs[i].cy))}</p></div>`;
+    }).join('')}</div>
+    <div class="row wrap"><button class="btn sm primary" data-act="addSeg">＋ Add segment</button>
+      <div class="seg mini">${['ft', 'm'].map(k => `<button class="${U === k ? 'on' : ''}" data-act="physUnit" data-u="${k}">${k === 'ft' ? 'feet' : 'meters'}</button>`).join('')}</div></div>
+    <div class="grid2">${numInput('segtool.gap', ui.segGap ?? 0, 'Gap px (auto-place)', 'step="1"')}<div class="fld"><span>&nbsp;</span><button class="btn sm" data-act="autoPlaceSegs">⇥ Auto-place L→R</button></div>
+      ${numInput('segtool.split', ui.segSplit ?? Math.max(2, s.segs.length), 'Split into N equal', 'min="1" max="256"')}<div class="fld"><span>&nbsp;</span><button class="btn sm" data-act="splitSegs">Split screen</button></div></div>
+    <p class="hint">Auto-place lines the segments up left → right in list order, top-aligned, butted together (or with the gap). Split replaces them with N whole-pixel segments that exactly fill the width (extra pixels go to the left ones).</p>
+    <div class="lbl mt">FIT CHECK</div>${fitBlock(s, true)}`;
+  return html + '</div>';
+}
+function pitchText(pi) {
+  const u = pi.unit === 'ft' ? 'ft' : 'm', p = v => v.toFixed(2);
+  const parts = [];
+  if (pi.pxPerUnitW) parts.push(`W: <b>${p(pi.pxPerUnitW)} px/${u}</b> · ${p(pi.pitchW)} mm pitch`);
+  if (pi.pxPerUnitH) parts.push(`H: <b>${p(pi.pxPerUnitH)} px/${u}</b> · ${p(pi.pitchH)} mm pitch`);
+  if (pi.square === false) parts.push(`<span class="warnc">⚠ W and H pitch differ by ${Math.abs((pi.pitchW / pi.pitchH - 1) * 100).toFixed(1)}% — check the physical size or pixel count</span>`);
+  return parts.join('<br>');
+}
+
+// ---------- Slides tab: PowerPoint / Keynote slide size + where segments land ----------
+const PREFS_KEY = 'showcrew.pixelmap.prefs';
+const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } })();
+const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { } };
+const slUnit = () => (prefs.slideUnit === 'cm' ? 'cm' : 'in');
+/** Segments (+ PiP boxes) of a screen as plain px rects. */
+function slideRects(s, withBoxes = true) {
+  const r = G.hasSegs(s) ? G.segments(s).map(g => ({ name: g.custom ? g.name : `Segment ${g.n}`, x: g.x0, y: g.y0, w: g.w, h: g.h, kind: 'seg' })) : [];
+  if (withBoxes) for (const b of s.boxes) r.push({ name: `PiP · ${b.name}`, x: b.x, y: b.y, w: b.w, h: b.h, kind: 'box' });
+  return r;
+}
+function slidePlan(s) {
+  const o = SL.pptOptions(s.w, s.h);
+  const p = o.options.find(x => x.key === ui.pptOpt) || o.options.find(x => x.recommended) || null;
+  return { o, p, kp: SL.keynotePlan(s.w, s.h) };
+}
+const cpy = (v, label = v) => `<button class="cpy" data-act="copy" data-copy="${esc(v)}" title="Copy ${esc(v)}">${label}<i>⧉</i></button>`;
+function panelSlides() {
+  const s = scr(), U = slUnit(), { o, p, kp } = slidePlan(s), rects = slideRects(s), f3 = SL.f3;
+  const uv = (inch, cm) => (U === 'cm' ? cm : inch);
+  let html = `<div class="row between"><div class="lbl">SLIDES FOR ${esc(s.name.toUpperCase())} · ${s.w}×${s.h}</div>
+    <div class="seg mini">${['in', 'cm'].map(k => `<button class="${U === k ? 'on' : ''}" data-act="slideUnit" data-u="${k}">${k === 'in' ? 'inches' : 'cm'}</button>`).join('')}</div></div>`;
+  html += `<p class="hint">PowerPoint maps <b>96 px = 1 in</b> (Widescreen 13.333 × 7.5 in = 1280×720) and allows <b>1–56 in</b> (2.54–142.24 cm) per side. At 1:1 this screen would be <b>${f3(uv(o.nativeW, o.nativeW * 2.54))} × ${f3(uv(o.nativeH, o.nativeH * 2.54))} ${U}</b> — ${o.impossible ? '<span class="warnc">aspect is wider than 56:1, PowerPoint can\'t hold it</span>' : o.fits ? 'fits as-is.' : o.tooBig ? '<span class="warnc">over the 56 in limit, so the slide has to be scaled down.</span>' : '<span class="warnc">under the 1 in minimum, so the slide is scaled up.</span>'}</p>`;
+  if (!p) return html + `<p class="warn">⚠ No PowerPoint slide size keeps this exact ${G.aspect(s.w, s.h).decText} ratio within 1–56 in. Split the content across slides or use a media server.</p>`;
+  // --- PowerPoint slide size
+  html += `<div class="card pptcard"><div class="lbl">POWERPOINT · DESIGN ▸ SLIDE SIZE ▸ CUSTOM</div>
+    ${o.options.length > 1 ? `<div class="seg full">${o.options.map(x => `<button class="${x === p ? 'on' : ''}" data-act="pptOpt" data-k="${x.key}">${esc(x.label)}${x.recommended ? ' ★' : ''}</button>`).join('')}</div>` : ''}
+    <div class="hud-stat"><div><div class="lbl">WIDTH</div><div class="big">${cpy(`${f3(uv(p.slideW, p.slideWcm))} ${U}`, `${f3(uv(p.slideW, p.slideWcm))}<small>${U}</small>`)}</div><div class="sub">${f3(p.slideWpt)} pt</div></div>
+      <div><div class="lbl">HEIGHT</div><div class="big">${cpy(`${f3(uv(p.slideH, p.slideHcm))} ${U}`, `${f3(uv(p.slideH, p.slideHcm))}<small>${U}</small>`)}</div><div class="sub">${f3(p.slideHpt)} pt</div></div></div>
+    <p class="hint">Scale <b>${p.key === 'exact' ? `1/${p.N}` : p.key === 'up' ? `×${p.M}` : f3(p.k)}</b> of 1:1 (${f3(p.k * 100)}%) · 1 slide inch = <b>${f3(p.pxPerIn)} screen px</b> · ${p.emuExact ? 'every screen pixel is a whole number of EMU (exact)' : `${f3(p.emuPerPx)} EMU per px`}. Type the values with the unit (e.g. <code>${f3(uv(p.slideW, p.slideWcm))} ${U}</code>) — PowerPoint converts to your region's units. Then pick <i>Don't Scale</i> / <i>Ensure Fit</i>.</p></div>`;
+  // --- export / playback
+  html += `<div class="card"><div class="lbl">BACK TO ${s.w}×${s.h} NATIVE PIXELS</div>
+    <ul class="steps">
+      <li><b>Playback:</b> full screen on a ${s.w}×${s.h} output PowerPoint scales the slide uniformly to fit — same aspect ratio, so it fills the output exactly.</li>
+      <li><b>Mac — PNG export:</b> File ▸ Export ▸ File Format <b>PNG</b> ▸ Width ${cpy(String(s.w))} (Height becomes ${s.h}).</li>
+      <li><b>Windows — PNG export:</b> ${p.winExact
+        ? `set registry DWORD <code>ExportBitmapResolution</code> = ${cpy(String(p.winDpi))} (Decimal) under <code>HKCU\\Software\\Microsoft\\Office\\16.0\\PowerPoint\\Options</code>, then File ▸ Save As ▸ PNG → <b>${s.w}×${s.h}</b>.`
+        : `this size needs ${f3(p.pxPerIn)} dpi, but <code>ExportBitmapResolution</code> only takes whole numbers — ${p.winCeilDpi} dpi gives ${p.winCeilPx[0]}×${p.winCeilPx[1]}. ${o.options.some(x => x.key === 'exact') ? 'Use the ★ exact option for a pixel-perfect export.' : ''}`}
+        Without the registry value PowerPoint exports at 96 dpi = ${p.default96[0]}×${p.default96[1]}.${p.bitmapOk ? '' : ' <span class="warnc">Over PowerPoint\'s 100 MP export limit.</span>'}${Math.max(s.w, s.h) > SL.PPT.OLD_MAX_EDGE ? ' PowerPoint 2010 and older cap exports at 3072 px.' : ''}</li>
+    </ul></div>`;
+  // --- where segments land
+  html += `<div class="card"><div class="lbl">WHERE THEY LAND · FORMAT SHAPE ▸ SIZE &amp; POSITION (${U})</div>
+    ${rects.length ? slideTable(rects.map(r => { const q = SL.onSlide(p, r); return { r, L: q.left[U], T: q.top[U], W: q.width[U], H: q.height[U], pt: q }; }), U) : '<p class="hint">No segments or PiP boxes on this screen yet — add them in Screen / PiP Boxes.</p>'}
+    <p class="hint">Position = <i>Horizontal / Vertical from Top Left Corner</i>. PowerPoint may display 2 decimals; type the 3-decimal value (0.001 in = ${f3(p.pxPerIn / 1000)} px here). Tap any value to copy it with its unit.</p></div>`;
+  html += currentSlideCard(s, rects, U);
+  // --- Keynote
+  html += `<div class="card"><div class="lbl">KEYNOTE · DOCUMENT ▸ SLIDE SIZE ▸ CUSTOM</div>
+    <div class="hud-stat"><div><div class="lbl">WIDTH</div><div class="big">${cpy(f3(kp.ptW))}</div><div class="sub">pt (= slide px)</div></div><div><div class="lbl">HEIGHT</div><div class="big">${cpy(f3(kp.ptH))}</div><div class="sub">${kp.N > 1 ? `1/${kp.N} scale` : '1:1 native'}</div></div></div>
+    <p class="hint">Keynote sizes slides in points and treats 1 pt as 1 slide pixel. Apple doesn't publish a maximum; current Keynote is reported to stop at <b>8192 × 8192</b> (older versions 4000).
+    ${kp.N > 1 ? ` ${s.w}×${s.h} is over that, so build at <b>1/${kp.N}</b>${kp.whole ? '' : ' (not whole points — round to the nearest point)'}; full-screen playback on the ${s.w}×${s.h} output scales it up ×${kp.N}.` : ' This screen fits at 1:1.'}
+    Arrange inspector X / Y / W / H (pt):</p>
+    ${rects.length ? `<table class="ro sl"><thead><tr><th>Item</th><th>X</th><th>Y</th><th>W</th><th>H</th></tr></thead><tbody>${rects.map(r => { const k = SL.keynoteRect(kp, r); return `<tr><td>${esc(r.name)}</td>${[k.x, k.y, k.w, k.h].map(v => `<td>${cpy(f3(v))}</td>`).join('')}</tr>`; }).join('')}</tbody></table>` : ''}
+    <p class="hint">Opening the PowerPoint file in Keynote keeps its slide size (in points: inches × 72) instead.</p></div>`;
+  // --- export summary / template
+  html += `<div class="card"><div class="lbl">SUMMARY &amp; TEMPLATE</div>
+    <div class="row wrap"><button class="btn sm" data-act="slideCopy">⧉ Copy summary</button><button class="btn sm" data-act="slideTxt">⤓ TXT</button><button class="btn sm" data-act="slideCsv">⤓ CSV</button><button class="btn sm primary" data-act="slidePptx">⤓ PowerPoint template (.pptx)</button></div>
+    <p class="hint">The .pptx has this slide size and one labeled, outlined rectangle per segment (plus PiP boxes and any unused areas) on a guide slide, and a blank slide 2. Open it in PowerPoint or Keynote; delete the guide shapes before the show.</p></div>`;
+  return html;
+}
+function slideTable(rows, U) {
+  return `<table class="ro sl"><thead><tr><th>Item</th><th>Left</th><th>Top</th><th>Width</th><th>Height</th></tr></thead><tbody>${rows.map(({ r, L, T, W, H }) => `<tr><td>${esc(r.name)}<span class="r">${G.fmt1(r.x)}, ${G.fmt1(r.y)} · ${G.fmt1(r.w)}×${G.fmt1(r.h)} px</span></td>${[L, T, W, H].map(v => `<td>${cpy(`${SL.f3(v)} ${U}`, SL.f3(v))}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+function currentSlideCard(s, rects, U) {
+  const pc = s.pptCur, cu = pc?.unit || U, c = pc ? SL.compareCurrent(s.w, s.h, pc) : null, f3 = SL.f3;
+  const { o, p } = slidePlan(s);
+  let html = `<div class="card cur-slide"><div class="lbl">YOUR CURRENT SLIDE SIZE</div>
+    <div class="grid3">${numInput('pptcur.w', pc ? pc.w : '', 'Width', 'step="any" min="0" placeholder="e.g. 55.561"')}${numInput('pptcur.h', pc ? pc.h : '', 'Height', 'step="any" min="0" placeholder="e.g. 5.28"')}
+      <div class="fld"><span>Unit</span><div class="seg full">${['in', 'cm'].map(k => `<button class="${cu === k ? 'on' : ''}" data-act="pptCurUnit" data-u="${k}">${k}</button>`).join('')}</div></div></div>`;
+  if (!c) return html + `<p class="hint">Type the size from your deck's Design ▸ Slide Size ▸ Custom to check it against ${s.w}×${s.h} and see where the segments land on <b>your</b> slide.</p></div>`;
+  const cv = v => (U === 'cm' ? v * 2.54 : v);
+  html += `<div class="readout"><div><span class="lbl">YOUR SLIDE</span><span class="v">${f3(c.slideAspect)}:1</span><span class="r">${f3(cv(c.cw))} × ${f3(cv(c.ch))} ${U}</span></div>
+      <div><span class="lbl">SCREEN</span><span class="v">${f3(c.screenAspect)}:1</span><span class="r">${s.w}×${s.h} px</span></div></div>`;
+  if (c.tooBig || c.tooSmall) html += `<p class="warn">⚠ PowerPoint only accepts 1–56 in per side; this size is outside that.</p>`;
+  if (c.match) html += `<p class="fitok">✓ Same aspect ratio as the screen — fills ${s.w}×${s.h} exactly. 1 slide inch = ${f3(c.pxPerIn)} px.</p>`;
+  else html += `<div class="fitwarn warn"><div class="fw-h">⚠ ASPECT MISMATCH <span>${c.diffPct > 0 ? '+' : ''}${c.diffPct.toFixed(2)}%</span></div><ul>
+      <li>Your slide is ${c.diffPct > 0 ? 'wider' : 'taller'} than the screen. Full screen on ${s.w}×${s.h} it is fitted by ${c.fitBy}: the image is <b>${G.fmt1(c.imgW)} × ${G.fmt1(c.imgH)} px</b> with ${G.fmt1(c.barsPx.each)} px bars ${c.barsPx.side} (${G.fmt1(c.barsPx.total)} px total) — nothing is stretched.</li>
+      <li>Keep your width → set height to ${cpy(`${f3(cv(c.keepWidthH))} ${U}`, `<b>${f3(cv(c.keepWidthH))} ${U}</b>`)}; or keep your height → width ${cpy(`${f3(cv(c.keepHeightW))} ${U}`, `<b>${f3(cv(c.keepHeightW))} ${U}</b>`)}${p ? `; or use the ★ size above (${f3(U === 'cm' ? p.slideWcm : p.slideW)} × ${f3(U === 'cm' ? p.slideHcm : p.slideH)} ${U})` : ''}.</li></ul></div>`;
+  if (rects.length) html += `<div class="lbl mt">WHERE THEY LAND ON YOUR SLIDE (${U})</div>${slideTable(rects.map(r => { const q = SL.onCurrent(c, r); return { r, L: q.left[U], T: q.top[U], W: q.width[U], H: q.height[U] }; }), U)}
+    <p class="hint">Assumes the slide is shown full screen on the ${s.w}×${s.h} output (uniform fit, centered). 1 slide inch = ${f3(c.pxPerIn)} screen px.${c.match ? '' : ' Negative/over-size values mean that edge falls in the bars.'}</p>`;
+  return html + '</div>';
+}
+function slideSummaryText(s) {
+  const { o, p, kp } = slidePlan(s), U = slUnit(), f3 = SL.f3, rects = slideRects(s), j = job();
+  const L = [`ShowCrew PixelMap — ${j.name} — ${s.name} ${s.w}×${s.h} px`, ''];
+  if (!p) return L.concat('No PowerPoint slide size keeps this aspect ratio within 1–56 in.').join('\n');
+  L.push(`PowerPoint slide size (Design > Slide Size > Custom): ${f3(p.slideW)} in × ${f3(p.slideH)} in  (${f3(p.slideWcm)} × ${f3(p.slideHcm)} cm, ${f3(p.slideWpt)} × ${f3(p.slideHpt)} pt)`);
+  L.push(`  ${p.label}; scale ${f3(p.k)} of 1:1 at 96 px/in; 1 slide inch = ${f3(p.pxPerIn)} screen px`);
+  L.push(`  Export to ${s.w}×${s.h}: Mac File > Export > PNG width ${s.w}; Windows ExportBitmapResolution ${p.winExact ? `= ${p.winDpi}` : `would need ${f3(p.pxPerIn)} (not whole — ${p.winCeilDpi} gives ${p.winCeilPx.join('×')})`}`);
+  L.push(`Keynote slide size: ${f3(kp.ptW)} × ${f3(kp.ptH)} pt${kp.N > 1 ? ` (1/${kp.N} scale; Keynote max ≈ 8192)` : ''}`);
+  const fit = G.segFit(s); if (!fit.exact) { L.push('', 'Segment fit warnings:'); fit.issues.forEach(i => L.push('  ! ' + i.text)); }
+  L.push('', `Positions (${U}) — Left, Top, Width, Height | px X, Y, W, H | Keynote pt X, Y, W, H`);
+  for (const r of rects) {
+    const q = SL.onSlide(p, r), k = SL.keynoteRect(kp, r);
+    L.push(`  ${r.name}: ${[q.left, q.top, q.width, q.height].map(v => f3(v[U])).join(', ')} | ${[r.x, r.y, r.w, r.h].map(f3).join(', ')} | ${[k.x, k.y, k.w, k.h].map(f3).join(', ')}`);
+  }
+  const c = s.pptCur && SL.compareCurrent(s.w, s.h, s.pptCur);
+  if (c) {
+    L.push('', `Current slide ${f3(c.cw)} × ${f3(c.ch)} in: aspect ${f3(c.slideAspect)}:1 vs screen ${f3(c.screenAspect)}:1 (${c.diffPct.toFixed(2)}%)${c.match ? '' : `; fitted by ${c.fitBy} → ${G.fmt1(c.imgW)}×${G.fmt1(c.imgH)} px; keep width → height ${f3(c.keepWidthH)} in`}`);
+    for (const r of rects) { const q = SL.onCurrent(c, r); L.push(`  ${r.name} on current slide (${U}): ${[q.left, q.top, q.width, q.height].map(v => f3(v[U])).join(', ')}`); }
+  }
+  L.push('', 'Sources: support.microsoft.com "Change the size of your PowerPoint slides" (1–56 in); learn.microsoft.com "export high-resolution slides" (96 dpi default, ExportBitmapResolution).');
+  return L.join('\n');
+}
+
 const EXP_ITEMS = [['bg', 'Background'], ['outline', 'Outline / border'], ['crosshair', 'Center crosshair'], ['centerLines', 'Center lines'], ['thirds', 'Thirds'], ['grid', 'Custom / panel grid'],
-  ['segDividers', 'Segment dividers'], ['segCenters', 'Segment centers'], ['segGuides', 'Segment guides (center/thirds)'], ['boxes', 'PiP boxes'], ['labels', 'Labels (name + resolution)'], ['coordLabels', 'Coordinate labels'], ['panelLabels', 'Panel numbers (C# R#)']];
+  ['segDividers', 'Segment dividers'], ['segCenters', 'Segment centers'], ['segGuides', 'Segment guides (center/thirds)'], ['boxes', 'PiP boxes'], ['labels', 'Labels (name + resolution)'], ['coordLabels', 'Coordinate labels'], ['panelLabels', 'Panel numbers (C# R#)'], ['unused', 'Unused / overlap areas (hatched, if segments don\'t fill)']];
 function panelExport() {
   const ex = job().exportSettings, s = scr();
   const color = (k, l) => `<label class="fld cpick"><span>${l}</span><input type="color" class="inp color" data-bind="ex.${k}" value="${ex[k]}"></label>`;
@@ -302,15 +460,24 @@ function drawStage() {
   const u = 1 / k;
   // outer glow frame
   ctx.save(); ctx.shadowColor = 'rgba(0,229,255,0.55)'; ctx.shadowBlur = 18; ctx.fillStyle = PREVIEW_COLORS.bg; ctx.fillRect(0, 0, s.w, s.h); ctx.restore();
-  const segs = G.segCount(s) > 1;
+  const segs = G.hasSegs(s);
+  // ultra-wide screens (e.g. 11344×1080) preview only ~40 px tall: canvas text would pile up, so hide it (status bar + badge still show it)
+  const roomy = s.h * k >= 110, lbl = v.labels && roomy;
   drawScreen(ctx, s, {
     u, lw: 1.1, glow: true, colors: PREVIEW_COLORS, origin: G.originOf(s, j.origin), boxOwnColors: true, fs: 11 * u, selectedId: ui.sel, snapLines: ui.snapLines,
     handles: true, handleR: 9, probe: ui.drag ? null : ui.probe,
     inc: { bg: true, outline: true, crosshair: v.center, centerLines: v.centerLines, thirds: v.thirds, grid: v.grid, segDividers: v.segments && segs,
-      segCenters: v.segments && segs && v.center, segGuides: v.segGuides && segs, boxes: v.boxes, labels: v.labels, coordLabels: v.labels, panelLabels: v.labels && v.grid && j.exportSettings.inc.panelLabels },
+      segCenters: v.segments && segs && v.center, segGuides: v.segGuides && segs, boxes: v.boxes, labels: lbl, coordLabels: lbl, panelLabels: lbl && v.grid && j.exportSettings.inc.panelLabels, unused: true },
   });
+  renderFitBadge(s);
 }
 
+function renderFitBadge(s) {
+  const el = $('#fitBadge'); if (!el) return;
+  const f = ui.view === 'canvas' && isGlobal() ? { exact: true } : G.segFit(s);
+  el.hidden = f.exact; if (f.exact) return;
+  el.className = 'fitbadge stage ' + f.level; el.textContent = `⚠ Segments don't ${f.level === 'error' ? 'fit' : 'fill'}: ${f.badge}`; el.title = f.issues.map(i => i.text).join('\n');
+}
 function toLocal(e) {
   const r = cv.getBoundingClientRect();
   return { x: (e.clientX - r.left - ui.ox) / ui.k, y: (e.clientY - r.top - ui.oy) / ui.k };
@@ -416,6 +583,10 @@ window.addEventListener('keydown', e => {
 
 // ---------- actions ----------
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 1600); }
+async function copyLong(text) {
+  try { await navigator.clipboard.writeText(text); toast('Summary copied'); }
+  catch { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('Summary copied'); } catch { toast('Copy failed'); } ta.remove(); }
+}
 async function copy(text) {
   try { await navigator.clipboard.writeText(text); }
   catch { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch { } ta.remove(); }
@@ -648,7 +819,7 @@ const ACTIONS = {
   tab: el => { ui.tab = el.dataset.tab; render(['panel']); },
   pickScreen: el => { job().currentScreenId = el.dataset.id; ui.sel = null; ui.probe = null; if (ui.view === 'canvas') ui.view = 'screen'; commit(['screens', 'panel', 'chips']); },
   addScreen: () => { const j = job(), s = Store.makeScreen(`Screen ${j.screens.length + 1}`, 1920, 1080); const last = j.screens[j.screens.length - 1]; if (last) s.x = last.x + last.w; j.screens.push(s); j.currentScreenId = s.id; ui.tab = 'screen'; ui.sel = null; commit(); },
-  dupScreen: () => { const j = job(), s = scr(), c = JSON.parse(JSON.stringify(s)); c.id = Store.uid('scr'); c.name += ' copy'; c.boxes.forEach(b => b.id = Store.uid('box')); j.screens.splice(j.screens.indexOf(s) + 1, 0, c); j.currentScreenId = c.id; commit(); },
+  dupScreen: () => { const j = job(), s = scr(), c = JSON.parse(JSON.stringify(s)); c.id = Store.uid('scr'); c.name += ' copy'; c.boxes.forEach(b => b.id = Store.uid('box')); (c.segs || []).forEach(g => g.id = Store.uid('seg')); j.screens.splice(j.screens.indexOf(s) + 1, 0, c); j.currentScreenId = c.id; commit(); },
   delScreen: async () => { const j = job(); if (j.screens.length < 2) return toast('A job needs at least one screen'); if (await confirmBox(`Delete screen “${scr().name}”?`)) { j.screens = j.screens.filter(s => s !== scr()); j.currentScreenId = j.screens[0].id; ui.sel = null; commit(); } },
   moveScreen: el => { const j = job(), s = scr(), i = j.screens.indexOf(s), k = i + +el.dataset.d; if (k < 0 || k >= j.screens.length) return; j.screens.splice(i, 1); j.screens.splice(k, 0, s); commit(); },
   toggleView: el => { const v = job().view; v[el.dataset.key] = !v[el.dataset.key]; commit(['chips']); },
@@ -662,8 +833,8 @@ const ACTIONS = {
   selBox: el => { ui.sel = el.dataset.id; render(['panel']); },
   boxColor: el => { const b = box(); if (b) { b.color = el.dataset.c; commit(['panel']); } },
   center: el => { const b = box(), s = scr(); if (!b) return; const a = el.dataset.a; if (a !== 'v') b.x = G.rnd((s.w - b.w) / 2); if (a !== 'h') b.y = G.rnd((s.h - b.h) / 2); commit(['panel']); },
-  centerSeg: () => { const b = box(), s = scr(), g = G.segments(s)[+($('#segPick')?.value || 0)]; ui.segPick = g.i; b.x = G.rnd(g.cx - b.w / 2); b.y = G.rnd((s.h - b.h) / 2); commit(['panel']); },
-  fitSeg: () => { const b = box(), s = scr(), g = G.segments(s)[+($('#segPick')?.value || 0)]; ui.segPick = g.i; b.x = G.rnd(g.x0); b.w = G.rnd(g.x1) - b.x; b.y = 0; b.h = s.h; commit(['panel']); },
+  centerSeg: () => { const b = box(), s = scr(), g = G.segments(s)[+($('#segPick')?.value || 0)]; ui.segPick = g.i; b.x = G.rnd(g.cx - b.w / 2); b.y = G.rnd(g.cy - b.h / 2); commit(['panel']); },
+  fitSeg: () => { const b = box(), s = scr(), g = G.segments(s)[+($('#segPick')?.value || 0)]; ui.segPick = g.i; b.x = G.rnd(g.x0); b.w = G.rnd(g.x1) - b.x; b.y = G.rnd(g.y0); b.h = G.rnd(g.y1) - b.y; commit(['panel']); },
   copyBox: () => { const b = box(), s = scr(); b && copy(`${G.rnd(OX(s, b.x))}, ${G.rnd(OY(s, b.y))}, ${b.w}, ${b.h}`); },
   copyBoxCenter: () => { const b = box(), s = scr(); b && copy(`${G.rnd(OX(s, b.x + b.w / 2))}, ${G.rnd(OY(s, b.y + b.h / 2))}`); },
   dupBox: () => { const b = box(); if (b) addBoxRect(b.w, b.h, b.x + 40, b.y + 40, b.name + ' copy'); },
@@ -671,6 +842,50 @@ const ACTIONS = {
   delBox: () => delBox(),
   gridMode: el => { scr().grid.mode = el.dataset.m; if (el.dataset.m !== 'off') { job().view.grid = true; job().exportSettings.inc.grid = true; } commit(); },
   panelPreset: el => { const [w, h] = el.dataset.p.split('x').map(Number); Object.assign(scr().grid, { mode: 'panel', panelW: w, panelH: h }); commit(); },
+  segMode: el => {
+    const s = scr();
+    if (el.dataset.m === 'custom') {
+      if (!s.segs || !s.segs.length) s.segs = G.splitEqualInt(s.w, s.h, G.segCount(s)).map(g => ({ id: Store.uid('seg'), ...g, pw: null, ph: null }));
+      s.segMode = 'custom';
+    } else s.segMode = 'equal';
+    s.segments = G.segCount(s); commit();
+  },
+  addSeg: () => {
+    const s = scr(), segs = G.segments(s), last = segs[segs.length - 1], x = last ? last.x1 : 0;
+    const w = Math.max(1, s.w - x > 0 ? s.w - x : (last ? last.w : s.w)), n = s.segs.length + 1;
+    s.segs.push({ id: Store.uid('seg'), name: `Seg ${n}`, x, y: 0, w, h: s.h, pw: null, ph: null }); s.segments = s.segs.length; commit();
+  },
+  delSeg: async el => {
+    const s = scr(), i = +el.dataset.i; if (!(await confirmBox(`Remove segment “${s.segs[i].name}”?`, 'Remove'))) return;
+    s.segs.splice(i, 1); if (!s.segs.length) s.segMode = 'equal'; s.segments = G.segCount(s); commit();
+  },
+  moveSeg: el => { const s = scr(), i = +el.dataset.i, k = i + +el.dataset.d; if (k < 0 || k >= s.segs.length) return; const [g] = s.segs.splice(i, 1); s.segs.splice(k, 0, g); commit(); },
+  autoPlaceSegs: () => { const s = scr(); G.autoPlaceSegs(s.segs, Math.round(+(ui.segGap ?? 0)) || 0); commit(); toast('Segments placed left → right'); },
+  splitSegs: async () => {
+    const s = scr(), n = Math.max(1, Math.min(256, Math.round(+(ui.segSplit ?? Math.max(2, s.segs.length))) || 1));
+    if (!(await confirmBox(`Replace the ${s.segs.length} segment(s) with ${n} equal whole-pixel segments?`, 'Split'))) return;
+    const old = s.segs; s.segs = G.splitEqualInt(s.w, s.h, n, old.map(g => g.name)).map((g, i) => ({ id: Store.uid('seg'), ...g, pw: null, ph: null }));
+    s.segments = s.segs.length; commit();
+  },
+  physUnit: el => { scr().physUnit = el.dataset.u; commit(['panel']); },
+  slideUnit: el => { prefs.slideUnit = el.dataset.u; savePrefs(); render(['panel']); },
+  pptOpt: el => { ui.pptOpt = el.dataset.k; render(['panel']); },
+  pptCurUnit: el => { const s = scr(); if (s.pptCur) { s.pptCur.unit = el.dataset.u; commit(['panel']); } else { ui.pptCurUnit = el.dataset.u; prefs.slideUnit = el.dataset.u; savePrefs(); render(['panel']); } },
+  slideCopy: () => { copyLong(slideSummaryText(scr())); },
+  slideTxt: () => { const s = scr(); shareOrDownload([new File([slideSummaryText(s)], `${fileSafe(job().name)}_${fileSafe(s.name)}_slides.txt`, { type: 'text/plain' })]); },
+  slideCsv: () => {
+    const s = scr(), { p, kp } = slidePlan(s); if (!p) return toast('No valid PowerPoint size for this aspect ratio');
+    shareOrDownload([new File([SL.toCsv(SL.summaryRows(s, p, kp, slideRects(s), slUnit()))], `${fileSafe(job().name)}_${fileSafe(s.name)}_slides.csv`, { type: 'text/csv' })]);
+  },
+  slidePptx: async () => {
+    const s = scr(), { p } = slidePlan(s); if (!p) return toast('No valid PowerPoint size for this aspect ratio');
+    toast('Building .pptx…');
+    try {
+      const blob = await buildPptx({ job: job(), s, p, rects: slideRects(s), fit: G.segFit(s), summary: slideSummaryText(s) });
+      const f = new File([blob], `${fileSafe(job().name)}_${fileSafe(s.name)}_${s.w}x${s.h}.pptx`, { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
+      ui.lastPptx = f; await shareOrDownload([f]);
+    } catch (e) { toast('PPTX failed: ' + e.message); }
+  },
   exportOne: () => doExport([scr()]),
   exportAll: () => doExport(job().screens.slice()),
   shareFiles: () => shareOrDownload(ui.exportFiles.map(f => f.file)),
@@ -708,6 +923,20 @@ document.addEventListener('change', e => {
   const [ns, k] = key.split('.'), v = el.type === 'checkbox' ? el.checked : el.value, n = +v;
   const s = scr(), b = box(), ex = job().exportSettings;
   const int = (x, min = -1e7, max = 1e7) => Number.isFinite(x) ? Math.min(max, Math.max(min, Math.round(x))) : null;
+  if (ns === 'seg') {   // seg.<index>.<field>
+    const [, i, fk] = key.split('.'), g = s.segs && s.segs[+i]; if (!g) return;
+    if (fk === 'name') g.name = v.trim() || g.name;
+    else if (fk === 'pw' || fk === 'ph') g[fk] = v === '' || !(n > 0) ? null : n;
+    else { const x = int(n, fk === 'w' || fk === 'h' ? 1 : -65536, fk === 'w' || fk === 'h' ? 65536 : 131072); if (x == null || v === '') return render(['panel']); g[fk] = x; }
+    return commit();
+  }
+  if (ns === 'segtool') { if (k === 'gap') ui.segGap = n; else ui.segSplit = n; return; }
+  if (ns === 'pptcur') {
+    const pc = s.pptCur || { w: null, h: null, unit: ui.pptCurUnit || slUnit() };
+    pc[k] = v === '' || !(n > 0) ? null : n;
+    s.pptCur = pc.w && pc.h ? pc : (pc.w || pc.h ? pc : null);
+    return commit(['panel']);
+  }
   if (ns === 'scr') {
     if (k === 'name') s.name = v.trim() || s.name;
     else if (k === 'segments') { const x = int(n, 1, 256); if (x) s.segments = x; }
@@ -744,7 +973,7 @@ new ResizeObserver(() => drawStage()).observe(wrap);
 if (syncConfigured) { renderSync(); sync.init(); authLinkError(); }
 window.addEventListener('orientationchange', () => setTimeout(drawStage, 300));
 render();
-window.__pm = { get S() { return S; }, ui, G, render, job, scr, ACTIONS, screenToBlob, sync };
+window.__pm = { get S() { return S; }, ui, G, SL, render, slideSummaryText, job, scr, ACTIONS, screenToBlob, sync };
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW registration failed', e));

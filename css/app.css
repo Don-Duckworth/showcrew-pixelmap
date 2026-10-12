@@ -179,6 +179,36 @@ table.ro { width: 100%; border-collapse: collapse; font-size: 14px; }
 .file { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--edge); border-radius: 10px; color: var(--text); text-decoration: none; font-size: 12px; word-break: break-all; }
 .file img { width: 100%; aspect-ratio: 16 / 7; object-fit: contain; background: #000; border-radius: 6px; } .file small { color: var(--dim); font-family: var(--mono); }
 
+/* ---------- v1.4: segment fit warnings, segment editor, slides ---------- */
+.fitbadge { display: inline-block; justify-self: start; margin-top: 4px; padding: 2px 8px; border-radius: 6px; font: 700 11px var(--mono); letter-spacing: .04em; border: 1px solid; }
+.fitbadge.warn { color: var(--amber); border-color: rgba(255, 176, 32, .6); background: rgba(255, 176, 32, .12); box-shadow: 0 0 10px rgba(255, 176, 32, .2); }
+.fitbadge.error { color: #ffc6cc; border-color: rgba(255, 90, 106, .75); background: rgba(255, 90, 106, .16); box-shadow: 0 0 10px rgba(255, 90, 106, .3); }
+.scr-card .fitbadge { grid-column: 2; }
+.fitbadge.stage { position: absolute; top: 8px; right: 8px; margin: 0; max-width: calc(100% - 16px); font-size: 12px; padding: 5px 10px; z-index: 2; pointer-events: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; backdrop-filter: blur(4px); }
+.fitbadge[hidden] { display: none; }
+.fitwarn { border-radius: 10px; padding: 10px 12px; border: 1px solid rgba(255, 176, 32, .55); background: repeating-linear-gradient(135deg, rgba(255, 176, 32, .07) 0 8px, transparent 8px 16px), rgba(0, 0, 0, .3); }
+.fitwarn.error { border-color: rgba(255, 90, 106, .7); background: repeating-linear-gradient(135deg, rgba(255, 90, 106, .08) 0 8px, transparent 8px 16px), rgba(0, 0, 0, .3); }
+.fw-h { font: 700 11px var(--mono); letter-spacing: .12em; color: var(--amber); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; } .fitwarn.error .fw-h { color: #ff8b97; }
+.fw-h span { color: #fff; letter-spacing: .04em; }
+.fitwarn ul, ul.steps { margin: 6px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.45; display: flex; flex-direction: column; gap: 4px; }
+.fitwarn li.warn { color: #ffd98a; } .fitwarn li.error { color: #ffb3bb; }
+.fitok { margin: 0; font-size: 13px; color: var(--teal); }
+.warnc { color: var(--amber); }
+.seg-rows { display: flex; flex-direction: column; gap: 10px; }
+.seg-row { border: 1px solid rgba(255, 176, 32, .28); border-left: 3px solid var(--amber); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: rgba(255, 176, 32, .03); }
+.seg-n { font: 700 13px var(--mono); color: var(--amber); min-width: 18px; text-align: center; }
+.seg-row .btn.sm { min-height: 38px; padding: 0 10px; }
+.seg-row .phys .inp { font-size: 14px; }
+.seg-sum { font-family: var(--mono); font-size: 11.5px; }
+.hint.pitch { font-family: var(--mono); font-size: 11.5px; }
+code { font: 12px var(--mono); color: var(--cyan); background: rgba(0, 229, 255, .08); padding: 1px 4px; border-radius: 4px; word-break: break-all; }
+.cpy { display: inline-flex; align-items: baseline; gap: 4px; background: none; border: 0; padding: 2px 0; cursor: pointer; color: inherit; font: inherit; text-align: left; }
+.cpy i { font-style: normal; font-size: .7em; color: var(--cyan); opacity: .75; }
+.cpy:active { background: rgba(0, 229, 255, .18); border-radius: 4px; }
+.big .cpy small { font-size: 12px; color: var(--dim); margin-left: 3px; }
+.ro.sl td { padding: 7px 5px; font: 600 13px var(--mono); } .ro.sl td:first-child { font-family: var(--sans); font-weight: 650; }
+.pptcard .seg.full button { white-space: normal; line-height: 1.15; font-size: 12.5px; padding: 4px 6px; }
+
 /* ---------- modal / toast ---------- */
 #modal { position: fixed; inset: 0; z-index: 50; background: rgba(0, 4, 10, .7); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: flex-start; justify-content: center; padding: calc(60px + var(--sat)) 14px 14px; }
 #modal[hidden] { display: none; }
