@@ -25,7 +25,7 @@ export function defaultView() {
   return { center: true, centerLines: true, thirds: true, grid: true, segments: true, segGuides: true, boxes: true, labels: true, snap: true };
 }
 export function makeScreen(name, w, h, segments = 1) {
-  return { id: uid('scr'), name, w, h, segments, segMode: 'equal', segs: [], physUnit: 'ft', pptCur: null, pptOut: null, x: 0, y: 0, grid: { mode: 'off', cols: 4, rows: 4, step: 256, panelW: 500, panelH: 500 }, boxes: [] };
+  return { id: uid('scr'), name, w, h, segments, segMode: 'equal', segs: [], physUnit: 'ft', pptCur: null, pptOut: null, segLayout: 'original', segmentsOriginal: null, x: 0, y: 0, grid: { mode: 'off', cols: 4, rows: 4, step: 256, panelW: 500, panelH: 500 }, boxes: [] };
 }
 export function autoPlace(job, align = 'top') {
   let x = 0; const maxH = Math.max(...job.screens.map(s => s.h), 0);
@@ -51,16 +51,23 @@ export function emptyJob(name) {
 }
 function sanitizeSegs(s, freshIds) {
   const H = Math.round(num(s.h, 1080, 1, 65536)), pos = v => (Number.isFinite(+v) && +v > 0 ? Math.min(1e5, +v) : null);
-  const segs = (Array.isArray(s.segs) ? s.segs : []).slice(0, 256).map((g, k) => ({
+  const segsOf = arr => (Array.isArray(arr) ? arr : []).slice(0, 256).map((g, k) => ({
     id: freshIds || !g.id ? uid('seg') : String(g.id), name: str(g.name, `Seg ${k + 1}`),
     x: Math.round(num(g.x, 0, -65536, 131072)), y: Math.round(num(g.y, 0, -65536, 131072)),
     w: Math.round(num(g.w, 1920, 1, 65536)), h: Math.round(num(g.h, H, 1, 65536)),
     pw: pos(g.pw), ph: pos(g.ph),   // optional physical size (physUnit) → pixel pitch
   }));
+  const segs = segsOf(s.segs);
   const custom = s.segMode === 'custom' && segs.length > 0;
   const pc = s.pptCur && typeof s.pptCur === 'object' && pos(s.pptCur.w) && pos(s.pptCur.h) ? { w: pos(s.pptCur.w), h: pos(s.pptCur.h), unit: s.pptCur.unit === 'cm' ? 'cm' : 'in' } : null;
   const po = s.pptOut && typeof s.pptOut === 'object' && pos(s.pptOut.w) && pos(s.pptOut.h) ? { w: Math.min(65536, Math.max(1, Math.round(s.pptOut.w))), h: Math.min(65536, Math.max(1, Math.round(s.pptOut.h))) } : null;
-  return { pptOut: po, segments: custom ? segs.length : Math.round(num(s.segments, 1, 1, 256)), segMode: custom ? 'custom' : 'equal', segs, physUnit: s.physUnit === 'm' ? 'm' : 'ft', pptCur: pc };
+  // v1.7 layout: 'fill' keeps the original layout in segmentsOriginal (same order/ids) and the active, filled layout in segs,
+  // so older versions (which drop these two fields) simply see the active layout.
+  let orig = null, layout = 'original';
+  if (custom && s.segLayout === 'fill' && Array.isArray(s.segmentsOriginal) && s.segmentsOriginal.length === segs.length) {
+    orig = segsOf(s.segmentsOriginal); orig.forEach((g, i) => { g.id = segs[i].id; }); layout = 'fill';
+  }
+  return { segLayout: layout, segmentsOriginal: orig, pptOut: po, segments: custom ? segs.length : Math.round(num(s.segments, 1, 1, 256)), segMode: custom ? 'custom' : 'equal', segs, physUnit: s.physUnit === 'm' ? 'm' : 'ft', pptCur: pc };
 }
 const num = (v, d, min = -1e7, max = 1e7) => { v = +v; return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : d; };
 const str = (v, d) => (typeof v === 'string' && v.trim() ? v.slice(0, 120) : d);

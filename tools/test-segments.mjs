@@ -242,4 +242,60 @@ t('store: pptOut kept/sanitized, optional', () => {
   assert.deepEqual(j.screens.map(s => s.pptOut), [{ w: 1920, h: 1080 }, null, null]);
   assert.equal(Store.makeScreen('n', 100, 100).pptOut, null);
 });
+// ---------- v1.7 Re-layout segments to fill ----------
+const FILLED = () => { const d = DON(); return { ...d, segLayout: 'fill', segmentsOriginal: d.segs.map(g => ({ ...g })), segs: G.fillSegs(d.segs, d.w), boxes: [] }; };
+t('fill: Don 3510/4320/3510 on 11344 → 3511/4322/3511 (largest remainder), butted from 0', () => {
+  // exact shares: 3510·11344/11340 = 3511.238, 4320·11344/11340 = 4321.524 → floors 3511+4321+3511 = 11343; the 1 leftover px goes to the largest remainder (Center .524)
+  near(3510 * 11344 / 11340, 3511.238, 1e-3); near(4320 * 11344 / 11340, 4321.524, 1e-3);
+  assert.deepEqual(G.fillWidths([3510, 4320, 3510], 11344), [3511, 4322, 3511]);
+  const f = G.fillSegs(DON().segs, 11344);
+  assert.deepEqual(f.map(g => [g.name, g.x, g.y, g.w, g.h, g.pw]), [['Left', 0, 0, 3511, 1080, 52], ['Center', 3511, 0, 4322, 1080, 66], ['Right', 7833, 0, 3511, 1080, 52]]);
+  const s = FILLED(); assert.ok(G.isFill(s)); const fit = G.segFit(s); assert.ok(fit.exact, JSON.stringify(fit.issues)); assert.equal(fit.level, 'ok');
+  assert.ok(!G.segFit(DON()).exact, 'original is 4 px short');
+  assert.equal(G.segments(s)[1].cx, 3511 + 4322 / 2);   // PiP "center in seg" uses the active layout
+});
+t('fill: rounding invariants (sum = W exactly, each within 1 px of exact share, ties → leftmost)', () => {
+  assert.deepEqual(G.fillWidths([1, 1, 1], 5), [2, 2, 1]); assert.deepEqual(G.fillWidths([1, 1, 1], 6), [2, 2, 2]); assert.deepEqual(G.fillWidths([3510, 4320, 3510], 11340), [3510, 4320, 3510]);
+  assert.deepEqual(G.fillWidths([3510, 4320, 3510], 11000), [3405, 4190, 3405]);   // shrink: 3404.762 / 4190.476 → floors 11000-… leftover to .762s
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let k = 0; k < 400; k++) {
+    const n = 1 + Math.floor(rnd() * 12), ws = Array.from({ length: n }, () => 1 + Math.floor(rnd() * 5000)), W = n + Math.floor(rnd() * 30000), tot = ws.reduce((a, b) => a + b, 0);
+    const out = G.fillWidths(ws, W); assert.equal(out.reduce((a, b) => a + b, 0), W, `sum ${ws} → ${W}`);
+    out.forEach((w, i) => { assert.ok(w >= 1 && Math.abs(w - ws[i] * W / tot) < 1 + 1e-9, `share ${i}: ${w} vs ${ws[i] * W / tot}`); });
+    const segs = ws.map((w, i) => ({ id: 'g' + i, name: 'S' + i, x: Math.floor(rnd() * 9000), y: 3, w, h: 50 }));
+    const f = G.fillSegs(segs, W), sorted = f.map((g, i) => [g, i]).sort((a, b) => a[0].x - b[0].x);
+    let x = 0; for (const [g, i] of sorted) { assert.equal(g.x, x); x += g.w; assert.equal(g.id, segs[i].id); assert.equal(g.y, 3); assert.equal(g.h, 50); }
+    assert.equal(x, W);
+  }
+});
+t('fill: order follows original X, not list order; y/h kept', () => {
+  const segs = [{ id: 'b', name: 'B', x: 2000, y: 10, w: 1000, h: 500 }, { id: 'a', name: 'A', x: 0, y: 0, w: 1000, h: 600 }, { id: 'c', name: 'C', x: 1000, y: 0, w: 500, h: 600 }];
+  assert.deepEqual(G.fillSegs(segs, 3000).map(g => [g.id, g.x, g.w, g.y, g.h]), [['b', 1800, 1200, 10, 500], ['a', 0, 1200, 0, 600], ['c', 1200, 600, 0, 600]]);
+});
+t('fill: resize from slide size keeps Fill (original scaled, then re-filled)', () => {
+  const c = G.resizeScreen(FILLED(), 5334, 507, 'scale');
+  assert.ok(G.isFill(c)); assert.deepEqual(c.segmentsOriginal.map(g => [g.x, g.w, g.h]), [[0, 1650, 507], [1650, 2032, 507], [3682, 1650, 507]]);
+  assert.equal(c.segs.reduce((a, g) => a + g.w, 0), 5334); assert.ok(G.segFit(c).exact); assert.deepEqual(c.segs.map(g => g.w), G.fillWidths([1650, 2032, 1650], 5334));
+  const k = G.resizeScreen(FILLED(), 11344, 1078, 'keep'); assert.ok(G.isFill(k)); assert.deepEqual(k.segs.map(g => g.w), [3511, 4322, 3511]);
+});
+t('store: segLayout / segmentsOriginal round-trip, validation, older jobs', () => {
+  const f = FILLED(); f.segs.forEach((g, i) => g.id = 'id' + i); f.segmentsOriginal.forEach((g, i) => g.id = 'id' + i);
+  let j = Store.sanitizeJob({ name: 'x', screens: [{ name: 'S', ...f }] }), s = j.screens[0];
+  assert.equal(s.segLayout, 'fill'); assert.deepEqual(s.segs.map(g => g.w), [3511, 4322, 3511]); assert.deepEqual(s.segmentsOriginal.map(g => g.w), [3510, 4320, 3510]); assert.ok(G.isFill(s));
+  assert.deepEqual(s.segmentsOriginal.map(g => g.id), s.segs.map(g => g.id));
+  j = Store.sanitizeJob({ name: 'x', screens: [{ name: 'S', ...f }] }, true); s = j.screens[0];   // fresh ids (import copy) stay aligned
+  assert.deepEqual(s.segmentsOriginal.map(g => g.id), s.segs.map(g => g.id)); assert.notEqual(s.segs[0].id, 'id0');
+  s = Store.sanitizeJob({ name: 'x', screens: [{ name: 'S', ...f, segmentsOriginal: f.segmentsOriginal.slice(1) }] }).screens[0];
+  assert.equal(s.segLayout, 'original'); assert.equal(s.segmentsOriginal, null); assert.deepEqual(s.segs.map(g => g.w), [3511, 4322, 3511]);
+  s = Store.sanitizeJob({ name: 'x', screens: [{ name: 'S', ...DON() }] }).screens[0]; assert.equal(s.segLayout, 'original'); assert.equal(s.segmentsOriginal, null);
+  s = Store.sanitizeJob({ name: 'x', screens: [{ name: 'S', w: 100, h: 100, segments: 2, segLayout: 'fill', segmentsOriginal: [] }] }).screens[0]; assert.equal(s.segLayout, 'original');
+  // older app versions keep only `segs` → they see the active (filled) layout
+  assert.equal(Store.makeScreen('n', 10, 10).segLayout, 'original');
+});
+t('slides: positions use the active layout', () => {
+  const s = FILLED(), p = SL.pptOptions(s.w, s.h).options.find(o => o.recommended), g = G.segments(s)[2];
+  const o = SL.onSlide(p, { name: g.name, x: g.x0, y: g.y0, w: g.w, h: g.h }); near(o.left.in, 7833 / 288, 1e-9); near(o.width.in, 3511 / 288, 1e-9);
+  const L = SL.landRects(SL.playbackFit(55.561, 5.28, 11344, 1080), 11344, 1080, G.segments(s).map(g => ({ name: g.name, x: g.x0, y: g.y0, w: g.w, h: g.h })));
+  assert.deepEqual(L.map(l => Math.round(l.out.x1)), [3511, 7833, 11344]);
+});
 console.log(`segment + slide tests passed (${n} groups)`);

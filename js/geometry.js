@@ -197,6 +197,10 @@ export function edgeMapper(edges, oldLen, newLen) {
  * Physical sizes (pw/ph), names, ids, grid and other fields are kept. Returns a NEW screen object (input untouched).
  */
 export function resizeScreen(s, W, H, mode = 'scale') {
+  if (isFill(s)) {   // v1.7: resize the ORIGINAL layout the same way, then re-fill the new width
+    const o = resizeScreen({ ...s, segLayout: 'original', segmentsOriginal: null, segs: s.segmentsOriginal }, W, H, mode);
+    return { ...o, segLayout: 'fill', segmentsOriginal: o.segs, segs: fillSegs(o.segs, W) };
+  }
   const c = JSON.parse(JSON.stringify(s)); c.w = W; c.h = H;
   if (mode === 'keep') {
     if (!isCustomSegs(s) && segCount(s) > 1) { c.segMode = 'custom'; c.segs = splitEqualInt(s.w, s.h, segCount(s)).map((g, i) => ({ id: `seg_${i}_${Date.now().toString(36)}`, ...g, pw: null, ph: null })); c.segments = c.segs.length; }
@@ -348,4 +352,33 @@ export function parseRatio(str) {
   const m = String(str).trim().match(/^(\d*\.?\d+)\s*[:x×/]\s*(\d*\.?\d+)$/i);
   if (m) { const a = +m[1], b = +m[2]; return a > 0 && b > 0 ? [a, b] : null; }
   const d = parseFloat(str); return d > 0 ? [d, 1] : null;
+}
+
+// ---------- v1.7: "Re-layout segments to fill" ----------
+/** Screen is showing its filled layout (segs = fillSegs(segmentsOriginal, w)). */
+export const isFill = s => !!(s && s.segLayout === 'fill' && isCustomSegs(s) && Array.isArray(s.segmentsOriginal) && s.segmentsOriginal.length === s.segs.length);
+/**
+ * Whole-pixel widths ∝ ws that sum to exactly W (largest-remainder method):
+ * floor every exact share, then give the leftover pixels one each to the largest fractional parts (ties → leftmost).
+ */
+export function fillWidths(ws, W) {
+  const n = ws.length, tot = ws.reduce((a, b) => a + b, 0); if (!n) return [];
+  if (!(tot > 0) || W < n) return ws.map(() => Math.max(1, Math.floor(W / n)));
+  const ex = ws.map(w => w * W / tot), out = ex.map(v => Math.floor(v + 1e-9));
+  let left = W - out.reduce((a, b) => a + b, 0);
+  const order = ex.map((v, i) => [v - out[i], i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (let k = 0; left > 0; k = (k + 1) % n, left--) out[order[k][1]]++;
+  for (let i = 0; i < n; i++) if (out[i] < 1) { const j = out.indexOf(Math.max(...out)); out[j] -= 1 - out[i]; out[i] = 1; }
+  return out;
+}
+/**
+ * Fill layout: segments ordered left → right by their original X (ties keep list order), widths scaled by the same ratio
+ * with fillWidths() so they sum to exactly W, butted from x = 0. Y and height, names, ids, physical sizes unchanged.
+ * Returns segments in the SAME array order as the input (ids line up with the original).
+ */
+export function fillSegs(segs, W) {
+  const order = segs.map((g, i) => i).sort((a, b) => segs[a].x - segs[b].x || a - b);
+  const ws = fillWidths(order.map(i => segs[i].w), W), out = segs.map(g => ({ ...g }));
+  let x = 0; order.forEach((i, k) => { out[i].x = x; out[i].w = ws[k]; x += ws[k]; });
+  return out;
 }

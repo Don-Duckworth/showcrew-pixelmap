@@ -271,3 +271,10 @@ code { font: 12px var(--mono); color: var(--cyan); background: rgba(0, 229, 255,
   .ro.gl { font-size: 12px; } .ro.gl td { padding: 8px 4px; } .ro.gl .v { font-size: 13px; }
 }
 .pb .readout .v { font-size: 15px; }
+
+/* v1.7 segment layout Original ↔ Fill width */
+.layout-box { border: 1px solid var(--edge); border-radius: 10px; padding: 10px; background: rgba(0, 0, 0, .25); display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.layout-box.is-fill { border-color: rgba(0, 229, 255, .55); box-shadow: 0 0 14px rgba(0, 229, 255, .15) inset; }
+.lay-state { margin: 0; font: 600 13px var(--mono); color: var(--teal); } .lay-state b { color: #fff; font-family: var(--sans); }
+.lay-tbl th.act, .lay-tbl td.act { color: #fff; background: rgba(0, 229, 255, .12); }
+.lay-tbl tr.tot td { border-top: 1px solid var(--edge2); }

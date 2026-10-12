@@ -111,3 +111,15 @@ For the recommended PowerPoint slide size, your current slide size and the slide
 Example: 55.561 × 5.28 in on 11344×1080 → 11344 × 1078.03 px at 204.172 px/in, "Black top and bottom: about 1 px each (exact 0.986 px each, 1.972 px total)"; no segment edge moves ≥ 1 px.
 
 Tests: `node tools/test-segments.mjs` (playback math) and `node tools/playback-test.mjs` (browser, iPad / iPhone / desktop).
+
+## Re-layout segments to fill (v1.7)
+
+Screen tab ▸ Segments (custom) ▸ **Layout: Original | ⇔ Fill width** (also offered as a button in the fit warning). Fill width scales every segment width by the same ratio so the segments run butted from x = 0 to exactly the screen width, left → right by their original X. Widths are whole pixels: each exact share is floored and the leftover pixels go one each to the largest fractional remainders (ties → leftmost), so the total is always exactly W. Y and heights are unchanged.
+
+Example: 3510 / 4320 / 3510 (11340, 4 px short) on 11344 → exact 3511.238 / 4321.524 / 3511.238 → **3511 / 4322 / 3511** = 11344 at x 0 / 3511 / 7833.
+
+Stored per screen (synced, backward compatible): `segLayout: 'original' | 'fill'`, `segmentsOriginal` (the original rects, same order/ids) and `segs` = the ACTIVE layout. Everything that reads segments (fit warning, canvas, PiP "Center in seg", Coords, Ratios, Slides positions, playback fit, PNG export, .pptx template) therefore uses the active layout, and older app versions simply see the active layout.
+
+**Editing while Fill is on edits the Original:** the W / X fields show the original values, and add / remove / reorder / auto-place / split change the original; the fill is recalculated immediately (also when the screen width or a slide-size resize changes the width). Name, physical size, Y and H apply to both layouts. "Keep fill as the new original" bakes the filled widths in (asks first) and turns Fill off.
+
+Tests: `node tools/test-segments.mjs` (fill math, rounding fuzz, store round-trip) and `node tools/fill-test.mjs` (browser, iPad / iPhone / desktop).

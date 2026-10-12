@@ -67,7 +67,7 @@ function renderScreens() {
         <span class="scr-idx">${String(i + 1).padStart(2, '0')}</span>
         <span class="scr-name">${esc(s.name)}</span>
         <span class="scr-res">${s.w}×${s.h}</span>
-        <span class="scr-meta">${a.text} · ${a.decText}${G.hasSegs(s) ? ` · <b>${n} seg${G.isCustomSegs(s) ? ' custom' : ''}</b>` : ''}${s.boxes.length ? ` · ${s.boxes.length} box` : ''}${gl ? `<br><i>@ ${s.x}, ${s.y}</i>` : ''}</span>
+        <span class="scr-meta">${a.text} · ${a.decText}${G.hasSegs(s) ? ` · <b>${n} seg${G.isCustomSegs(s) ? (G.isFill(s) ? ' custom · fill' : ' custom') : ''}</b>` : ''}${s.boxes.length ? ` · ${s.boxes.length} box` : ''}${gl ? `<br><i>@ ${s.x}, ${s.y}</i>` : ''}</span>
         ${fit.exact ? '' : `<span class="fitbadge ${fit.level}" title="${esc(fit.issues.map(i => i.text).join('\n'))}">⚠ ${esc(fit.badge)}</span>`}
       </button>`;
     }).join('')}</div>
@@ -113,7 +113,7 @@ function aspectBlock(s) {
   const a = G.aspect(s.w, s.h);
   return `<div class="hud-stat"><div><div class="lbl">RESOLUTION</div><div class="big">${s.w}<i>×</i>${s.h}</div></div>
     <div><div class="lbl">ASPECT</div><div class="big">${a.text}</div><div class="sub">${a.decText}</div></div>
-    ${G.hasSegs(s) ? `<div><div class="lbl">SEGMENTS</div><div class="big amber">${G.segCount(s)}</div><div class="sub">${G.isCustomSegs(s) ? 'custom' : `${F(s.w / G.segCount(s))}×${s.h} each`}</div></div>` : ''}</div>
+    ${G.hasSegs(s) ? `<div><div class="lbl">SEGMENTS</div><div class="big amber">${G.segCount(s)}</div><div class="sub">${G.isCustomSegs(s) ? (G.isFill(s) ? 'custom · fill width' : 'custom') : `${F(s.w / G.segCount(s))}×${s.h} each`}</div></div>` : ''}</div>
     ${fitBlock(s)}`;
 }
 
@@ -123,9 +123,10 @@ function fitBlock(s, full = false) {
   if (!G.isCustomSegs(s)) return '';
   if (f.exact) return full ? `<p class="fitok">✓ Segments fill the screen exactly (${G.segments(s).map(g => g.w).join(' + ')} = ${s.w} px).</p>` : '';
   const list = full ? f.issues : f.issues.slice(0, 3);
+  const fillBtn = full && !G.isFill(s) ? `<div class="row"><button class="btn sm primary" data-act="segLayout" data-m="fill">⇔ Re-layout segments to fill ${s.w} px</button></div>` : '';
   return `<div class="fitwarn ${f.level}"><div class="fw-h">⚠ SEGMENTS DON'T ${f.level === 'error' ? 'FIT' : 'FILL'} THE SCREEN <span>${esc(f.badge)}</span></div>
     <ul>${list.map(i => `<li class="${i.level}">${esc(i.text)}</li>`).join('')}${!full && f.issues.length > 3 ? `<li>…${f.issues.length - 3} more in the Screen tab</li>` : ''}</ul>
-    ${full ? '<p class="hint">Unused areas are hatched amber on the canvas, overlaps red, edges a segment runs past get a red bar. Coordinates are still relative to the whole screen.</p>' : ''}</div>`;
+    ${full ? '<p class="hint">Unused areas are hatched amber on the canvas, overlaps red, edges a segment runs past get a red bar. Coordinates are still relative to the whole screen.</p>' : ''}${fillBtn}</div>`;
 }
 
 function panelCoords() {
@@ -270,6 +271,33 @@ function panelScreen() {
   <div class="row wrap"><button class="btn sm" data-act="openSlideDlg" data-k="dup">⧉ Duplicate from slide size…</button><button class="btn sm" data-act="openSlideDlg" data-k="resize">⤢ Resize from slide size…</button></div>`;
 }
 
+// ---------- v1.7: segment layout Original ↔ Fill width ----------
+// Rule while Fill is active: the ORIGINAL layout is what you edit. Name, physical size, Y and height edits apply to both layouts;
+// W / X edits, add, remove, reorder, auto-place and split change the original, and the fill is recalculated from it right away
+// (also when the screen width changes). "Keep fill as original" bakes the filled widths in and turns Fill off.
+const refill = s => { if (G.isFill(s)) s.segs = G.fillSegs(s.segmentsOriginal, s.w); };
+function editSegs(s, fn) {
+  if (!G.isFill(s)) return fn(s);
+  s.segs = s.segmentsOriginal; const r = fn(s);
+  if (s.segMode !== 'custom' || !s.segs.length) { s.segLayout = 'original'; s.segmentsOriginal = null; return r; }
+  s.segmentsOriginal = s.segs; s.segs = G.fillSegs(s.segmentsOriginal, s.w); return r;
+}
+const segIdsFresh = c => { (c.segs || []).forEach((g, i) => { g.id = Store.uid('seg'); if (c.segmentsOriginal && c.segmentsOriginal[i]) c.segmentsOriginal[i].id = g.id; }); };
+function layoutBox(s) {
+  const fill = G.isFill(s), orig = fill ? s.segmentsOriginal : s.segs, filled = fill ? s.segs : G.fillSegs(s.segs, s.w);
+  const sum = a => a.reduce((t, g) => t + g.w, 0), os = sum(orig), fs = sum(filled), of = G.segFit({ ...s, segs: orig, segLayout: 'original' });
+  return `<div class="layout-box ${fill ? 'is-fill' : 'is-orig'}" data-layout="${fill ? 'fill' : 'original'}"><div class="row between"><div class="lbl">LAYOUT</div>
+    <div class="seg mini">${[['original', 'Original'], ['fill', '⇔ Fill width']].map(([k, l]) => `<button class="${(fill ? 'fill' : 'original') === k ? 'on' : ''}" data-act="segLayout" data-m="${k}">${l}</button>`).join('')}</div></div>
+    <p class="lay-state">Active: <b>${fill ? 'Fill width' : 'Original'}</b> — ${(fill ? filled : orig).map(g => g.w).join(' + ')} = ${fill ? fs : os} px${fill ? ` (fills ${s.w} exactly)` : of.exact ? ' (fills the screen)' : ` · ${esc(of.badge)}`}</p>
+    <table class="ro sl lay-tbl"><thead><tr><th>Segment</th><th class="${fill ? '' : 'act'}">Original</th><th class="${fill ? 'act' : ''}">Fill width</th><th>Δ W</th></tr></thead><tbody>${orig.map((g, i) => `<tr><td>${esc(g.name)}</td>
+      <td class="${fill ? '' : 'act'}">${g.w}<span class="r">x ${g.x}–${g.x + g.w}</span></td><td class="${fill ? 'act' : ''}">${filled[i].w}<span class="r">x ${filled[i].x}–${filled[i].x + filled[i].w}</span></td><td>${filled[i].w - g.w >= 0 ? '+' : ''}${filled[i].w - g.w}</td></tr>`).join('')}
+      <tr class="tot"><td>Total</td><td class="${fill ? '' : 'act'}">${os}</td><td class="${fill ? 'act' : ''}">${fs}</td><td>${fs - os >= 0 ? '+' : ''}${fs - os}</td></tr></tbody></table>
+    <p class="hint">Fill width scales the widths by the same ratio (×${(s.w / (os || 1)).toFixed(5).replace(/\.?0+$/, '')}) so they run butted from x = 0 to exactly ${s.w} px, left → right by original X; rounding goes to the segments with the largest remainders. Y and heights don't change. ${fill
+      ? '<b>While Fill is on you edit the Original</b> (the W / X fields below are the original values); the fill is recalculated after every change. Names, physical size, Y and H apply to both.'
+      : 'Original is remembered while Fill is on — one tap switches back.'}</p>
+    ${fill ? '<div class="row"><button class="btn sm" data-act="bakeFill">Keep fill as the new original</button></div>' : ''}</div>`;
+}
+
 // ---------- segment editor (Screen tab) ----------
 function segEditor(s) {
   const custom = G.isCustomSegs(s), n = G.segCount(s), U = s.physUnit || 'ft';
@@ -281,21 +309,22 @@ function segEditor(s) {
       <p class="hint">Equal split always fills the screen. Use <b>Custom sizes</b> when the real segments have their own widths/heights (they're filled in from this split so you can edit them).</p>`;
     return html + '</div>';
   }
-  const segs = G.segments(s);
+  const segs = G.segments(s), fill = G.isFill(s), src = fill ? s.segmentsOriginal : s.segs;
+  html += layoutBox(s);
   html += `<p class="hint">Each segment: name, size and X/Y offset <b>from the screen's top-left</b> (px). Readouts in Coords use the job origin${isCtr() ? ' (center = 0,0)' : ''}. Physical size is optional → pixel pitch.</p>
-    <div class="seg-rows">${s.segs.map((g, i) => {
+    <div class="seg-rows">${src.map((g, i) => {
       const pi = G.physInfo(g.w, g.h, g.pw, g.ph, U);
       return `<div class="seg-row" data-i="${i}"><div class="row"><span class="seg-n">${i + 1}</span><input class="inp grow" data-f="seg.${i}.name" data-bind="seg.${i}.name" value="${esc(g.name)}" aria-label="Segment ${i + 1} name">
-        <button class="btn sm ghost" data-act="moveSeg" data-i="${i}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="btn sm ghost" data-act="moveSeg" data-i="${i}" data-d="1" ${i === s.segs.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button><button class="btn sm danger" data-act="delSeg" data-i="${i}" aria-label="Remove segment">✕</button></div>
-        <div class="grid4">${numInput(`seg.${i}.w`, g.w, 'W px', 'min="1"')}${numInput(`seg.${i}.h`, g.h, 'H px', 'min="1"')}${numInput(`seg.${i}.x`, g.x, 'X offset')}${numInput(`seg.${i}.y`, g.y, 'Y offset')}</div>
+        <button class="btn sm ghost" data-act="moveSeg" data-i="${i}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="btn sm ghost" data-act="moveSeg" data-i="${i}" data-d="1" ${i === src.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button><button class="btn sm danger" data-act="delSeg" data-i="${i}" aria-label="Remove segment">✕</button></div>
+        <div class="grid4">${numInput(`seg.${i}.w`, g.w, fill ? 'Original W' : 'W px', 'min="1"')}${numInput(`seg.${i}.h`, g.h, 'H px', 'min="1"')}${numInput(`seg.${i}.x`, g.x, fill ? 'Original X' : 'X offset')}${numInput(`seg.${i}.y`, g.y, 'Y offset')}</div>
         <div class="grid4 phys">${numInput(`seg.${i}.pw`, g.pw ?? '', `Phys W ${U}`, 'min="0" step="any" placeholder="opt."')}${numInput(`seg.${i}.ph`, g.ph ?? '', `Phys H ${U}`, 'min="0" step="any" placeholder="opt."')}
           <div class="fld span2"><span>PIXEL DENSITY</span><p class="hint pitch">${pi ? pitchText(pi) : 'Enter the physical size to see px per ' + (U === 'ft' ? 'foot' : 'meter') + ' and pitch.'}</p></div></div>
-        <p class="hint seg-sum">x ${segs[i].x0}–${segs[i].x1} · y ${segs[i].y0}–${segs[i].y1} · center ${F(OX(s, segs[i].cx))}, ${F(OY(s, segs[i].cy))}</p></div>`;
+        <p class="hint seg-sum">${fill ? '<b>fill</b> ' : ''}x ${segs[i].x0}–${segs[i].x1} · y ${segs[i].y0}–${segs[i].y1} · center ${F(OX(s, segs[i].cx))}, ${F(OY(s, segs[i].cy))}</p></div>`;
     }).join('')}</div>
     <div class="row wrap"><button class="btn sm primary" data-act="addSeg">＋ Add segment</button>
       <div class="seg mini">${['ft', 'm'].map(k => `<button class="${U === k ? 'on' : ''}" data-act="physUnit" data-u="${k}">${k === 'ft' ? 'feet' : 'meters'}</button>`).join('')}</div></div>
     <div class="grid2">${numInput('segtool.gap', ui.segGap ?? 0, 'Gap px (auto-place)', 'step="1"')}<div class="fld"><span>&nbsp;</span><button class="btn sm" data-act="autoPlaceSegs">⇥ Auto-place L→R</button></div>
-      ${numInput('segtool.split', ui.segSplit ?? Math.max(2, s.segs.length), 'Split into N equal', 'min="1" max="256"')}<div class="fld"><span>&nbsp;</span><button class="btn sm" data-act="splitSegs">Split screen</button></div></div>
+      ${numInput('segtool.split', ui.segSplit ?? Math.max(2, src.length), 'Split into N equal', 'min="1" max="256"')}<div class="fld"><span>&nbsp;</span><button class="btn sm" data-act="splitSegs">Split screen</button></div></div>
     <p class="hint">Auto-place lines the segments up left → right in list order, top-aligned, butted together (or with the gap). Split replaces them with N whole-pixel segments that exactly fill the width (extra pixels go to the left ones).</p>
     <div class="lbl mt">FIT CHECK</div>${fitBlock(s, true)}`;
   return html + '</div>';
@@ -768,7 +797,7 @@ function applySlideDlg() {
   if (slide) c.pptCur = slide;
   if (d.kind === 'dup') {
     c.id = Store.uid('scr'); c.name = (sdName() || '').trim() || `${s.name} copy`;
-    c.boxes.forEach(b => b.id = Store.uid('box')); (c.segs || []).forEach(g => g.id = Store.uid('seg'));
+    c.boxes.forEach(b => b.id = Store.uid('box')); segIdsFresh(c);
     j.screens.splice(j.screens.indexOf(s) + 1, 0, c); j.currentScreenId = c.id; ui.sel = null;
     closeModal(); commit(); toast(`Duplicated → ${c.name} ${r.w}×${r.h}`); return;
   }
@@ -936,7 +965,7 @@ const ACTIONS = {
   tab: el => { ui.tab = el.dataset.tab; render(['panel']); },
   pickScreen: el => { job().currentScreenId = el.dataset.id; ui.sel = null; ui.probe = null; if (ui.view === 'canvas') ui.view = 'screen'; commit(['screens', 'panel', 'chips']); },
   addScreen: () => { const j = job(), s = Store.makeScreen(`Screen ${j.screens.length + 1}`, 1920, 1080); const last = j.screens[j.screens.length - 1]; if (last) s.x = last.x + last.w; j.screens.push(s); j.currentScreenId = s.id; ui.tab = 'screen'; ui.sel = null; commit(); },
-  dupScreen: () => { const j = job(), s = scr(), c = JSON.parse(JSON.stringify(s)); c.id = Store.uid('scr'); c.name += ' copy'; c.boxes.forEach(b => b.id = Store.uid('box')); (c.segs || []).forEach(g => g.id = Store.uid('seg')); j.screens.splice(j.screens.indexOf(s) + 1, 0, c); j.currentScreenId = c.id; commit(); },
+  dupScreen: () => { const j = job(), s = scr(), c = JSON.parse(JSON.stringify(s)); c.id = Store.uid('scr'); c.name += ' copy'; c.boxes.forEach(b => b.id = Store.uid('box')); segIdsFresh(c); j.screens.splice(j.screens.indexOf(s) + 1, 0, c); j.currentScreenId = c.id; commit(); },
   delScreen: async () => { const j = job(); if (j.screens.length < 2) return toast('A job needs at least one screen'); if (await confirmBox(`Delete screen “${scr().name}”?`)) { j.screens = j.screens.filter(s => s !== scr()); j.currentScreenId = j.screens[0].id; ui.sel = null; commit(); } },
   moveScreen: el => { const j = job(), s = scr(), i = j.screens.indexOf(s), k = i + +el.dataset.d; if (k < 0 || k >= j.screens.length) return; j.screens.splice(i, 1); j.screens.splice(k, 0, s); commit(); },
   toggleView: el => { const v = job().view; v[el.dataset.key] = !v[el.dataset.key]; commit(['chips']); },
@@ -959,8 +988,20 @@ const ACTIONS = {
   delBox: () => delBox(),
   gridMode: el => { scr().grid.mode = el.dataset.m; if (el.dataset.m !== 'off') { job().view.grid = true; job().exportSettings.inc.grid = true; } commit(); },
   panelPreset: el => { const [w, h] = el.dataset.p.split('x').map(Number); Object.assign(scr().grid, { mode: 'panel', panelW: w, panelH: h }); commit(); },
+  segLayout: el => {
+    const s = scr(); if (!G.isCustomSegs(s)) return;
+    if (el.dataset.m === 'fill' && !G.isFill(s)) { s.segmentsOriginal = JSON.parse(JSON.stringify(s.segs)); s.segs = G.fillSegs(s.segmentsOriginal, s.w); s.segLayout = 'fill'; toast(`Fill width: ${s.segs.map(g => g.w).join(' + ')} = ${s.w}`); }
+    else if (el.dataset.m === 'original' && G.isFill(s)) { s.segs = s.segmentsOriginal; s.segmentsOriginal = null; s.segLayout = 'original'; toast('Original segment layout'); }
+    commit();
+  },
+  bakeFill: async () => {
+    const s = scr(); if (!G.isFill(s)) return;
+    if (!(await confirmBox(`Make the filled widths (${s.segs.map(g => g.w).join(' / ')}) the new original? The current original (${s.segmentsOriginal.map(g => g.w).join(' / ')}) is discarded.`, 'Keep fill'))) return;
+    s.segmentsOriginal = null; s.segLayout = 'original'; commit();
+  },
   segMode: el => {
     const s = scr();
+    if (el.dataset.m !== 'custom' && G.isFill(s)) { s.segs = s.segmentsOriginal; s.segmentsOriginal = null; s.segLayout = 'original'; }
     if (el.dataset.m === 'custom') {
       if (!s.segs || !s.segs.length) s.segs = G.splitEqualInt(s.w, s.h, G.segCount(s)).map(g => ({ id: Store.uid('seg'), ...g, pw: null, ph: null }));
       s.segMode = 'custom';
@@ -968,21 +1009,23 @@ const ACTIONS = {
     s.segments = G.segCount(s); commit();
   },
   addSeg: () => {
-    const s = scr(), segs = G.segments(s), last = segs[segs.length - 1], x = last ? last.x1 : 0;
-    const w = Math.max(1, s.w - x > 0 ? s.w - x : (last ? last.w : s.w)), n = s.segs.length + 1;
-    s.segs.push({ id: Store.uid('seg'), name: `Seg ${n}`, x, y: 0, w, h: s.h, pw: null, ph: null }); s.segments = s.segs.length; commit();
+    const s = scr(); editSegs(s, s => {
+      const segs = G.segments(s), last = segs[segs.length - 1], x = last ? last.x1 : 0;
+      const w = Math.max(1, s.w - x > 0 ? s.w - x : (last ? last.w : s.w)), n = s.segs.length + 1;
+      s.segs.push({ id: Store.uid('seg'), name: `Seg ${n}`, x, y: 0, w, h: s.h, pw: null, ph: null }); s.segments = s.segs.length;
+    }); commit();
   },
   delSeg: async el => {
     const s = scr(), i = +el.dataset.i; if (!(await confirmBox(`Remove segment “${s.segs[i].name}”?`, 'Remove'))) return;
-    s.segs.splice(i, 1); if (!s.segs.length) s.segMode = 'equal'; s.segments = G.segCount(s); commit();
+    editSegs(s, s => { s.segs.splice(i, 1); if (!s.segs.length) s.segMode = 'equal'; s.segments = G.segCount(s); }); commit();
   },
-  moveSeg: el => { const s = scr(), i = +el.dataset.i, k = i + +el.dataset.d; if (k < 0 || k >= s.segs.length) return; const [g] = s.segs.splice(i, 1); s.segs.splice(k, 0, g); commit(); },
-  autoPlaceSegs: () => { const s = scr(); G.autoPlaceSegs(s.segs, Math.round(+(ui.segGap ?? 0)) || 0); commit(); toast('Segments placed left → right'); },
+  moveSeg: el => { const s = scr(), i = +el.dataset.i, k = i + +el.dataset.d; if (k < 0 || k >= s.segs.length) return; editSegs(s, s => { const [g] = s.segs.splice(i, 1); s.segs.splice(k, 0, g); }); commit(); },
+  autoPlaceSegs: () => { const s = scr(); editSegs(s, s => G.autoPlaceSegs(s.segs, Math.round(+(ui.segGap ?? 0)) || 0)); commit(); toast('Segments placed left → right'); },
   splitSegs: async () => {
     const s = scr(), n = Math.max(1, Math.min(256, Math.round(+(ui.segSplit ?? Math.max(2, s.segs.length))) || 1));
     if (!(await confirmBox(`Replace the ${s.segs.length} segment(s) with ${n} equal whole-pixel segments?`, 'Split'))) return;
-    const old = s.segs; s.segs = G.splitEqualInt(s.w, s.h, n, old.map(g => g.name)).map((g, i) => ({ id: Store.uid('seg'), ...g, pw: null, ph: null }));
-    s.segments = s.segs.length; commit();
+    editSegs(s, s => { const old = s.segs; s.segs = G.splitEqualInt(s.w, s.h, n, old.map(g => g.name)).map((g, i) => ({ id: Store.uid('seg'), ...g, pw: null, ph: null })); s.segments = s.segs.length; });
+    commit();
   },
   physUnit: el => { scr().physUnit = el.dataset.u; commit(['panel']); },
   slideUnit: el => { prefs.slideUnit = el.dataset.u; savePrefs(); render(['panel']); },
@@ -1045,10 +1088,15 @@ document.addEventListener('change', e => {
   const s = scr(), b = box(), ex = job().exportSettings;
   const int = (x, min = -1e7, max = 1e7) => Number.isFinite(x) ? Math.min(max, Math.max(min, Math.round(x))) : null;
   if (ns === 'seg') {   // seg.<index>.<field>
-    const [, i, fk] = key.split('.'), g = s.segs && s.segs[+i]; if (!g) return;
-    if (fk === 'name') g.name = v.trim() || g.name;
-    else if (fk === 'pw' || fk === 'ph') g[fk] = v === '' || !(n > 0) ? null : n;
-    else { const x = int(n, fk === 'w' || fk === 'h' ? 1 : -65536, fk === 'w' || fk === 'h' ? 65536 : 131072); if (x == null || v === '') return render(['panel']); g[fk] = x; }
+    const [, i, fk] = key.split('.'), fill = G.isFill(s), src = fill ? s.segmentsOriginal : s.segs, g = src && src[+i]; if (!g) return;
+    const both = fill ? [g, s.segs[+i]] : [g];   // fill mode: name / physical / Y / H go to both layouts, W / X to the original
+    if (fk === 'name') { const nm = v.trim() || g.name; both.forEach(x => x.name = nm); }
+    else if (fk === 'pw' || fk === 'ph') both.forEach(x => x[fk] = v === '' || !(n > 0) ? null : n);
+    else {
+      const x = int(n, fk === 'w' || fk === 'h' ? 1 : -65536, fk === 'w' || fk === 'h' ? 65536 : 131072); if (x == null || v === '') return render(['panel']);
+      if (fk === 'y' || fk === 'h') both.forEach(t => t[fk] = x); else g[fk] = x;
+      refill(s);
+    }
     return commit();
   }
   if (ns === 'segtool') { if (k === 'gap') ui.segGap = n; else ui.segSplit = n; return; }
@@ -1066,7 +1114,7 @@ document.addEventListener('change', e => {
   if (ns === 'scr') {
     if (k === 'name') s.name = v.trim() || s.name;
     else if (k === 'segments') { const x = int(n, 1, 256); if (x) s.segments = x; }
-    else { const x = int(n, k === 'w' || k === 'h' ? 1 : -1e7, 65536); if (x != null) s[k] = x; }
+    else { const x = int(n, k === 'w' || k === 'h' ? 1 : -1e7, 65536); if (x != null) s[k] = x; if (k === 'w') refill(s); }
     return commit();
   }
   if (ns === 'grid') { if (n > 0) s.grid[k] = k === 'step' ? n : Math.round(n); return commit(); }
