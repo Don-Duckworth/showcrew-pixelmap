@@ -278,3 +278,12 @@ code { font: 12px var(--mono); color: var(--cyan); background: rgba(0, 229, 255,
 .lay-state { margin: 0; font: 600 13px var(--mono); color: var(--teal); } .lay-state b { color: #fff; font-family: var(--sans); }
 .lay-tbl th.act, .lay-tbl td.act { color: #fff; background: rgba(0, 229, 255, .12); }
 .lay-tbl tr.tot td { border-top: 1px solid var(--edge2); }
+
+/* v1.8 Slides sub-tabs + Keynote */
+.subtabs { margin-bottom: 10px; }
+.subtabs button { font-weight: 700; letter-spacing: .04em; }
+.subpane { display: flex; flex-direction: column; gap: 12px; }
+a.src { color: var(--cyan); text-decoration: underline dotted; text-underline-offset: 2px; }
+.key-opts tr.on td { background: rgba(0, 229, 255, .1); color: #fff; }
+.keycard .seg.full button { white-space: normal; line-height: 1.15; font-size: 12.5px; padding: 4px 6px; }
+ol.steps { margin: 6px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.45; display: flex; flex-direction: column; gap: 4px; }

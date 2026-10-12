@@ -123,3 +123,14 @@ Stored per screen (synced, backward compatible): `segLayout: 'original' | 'fill'
 **Editing while Fill is on edits the Original:** the W / X fields show the original values, and add / remove / reorder / auto-place / split change the original; the fill is recalculated immediately (also when the screen width or a slide-size resize changes the width). Name, physical size, Y and H apply to both layouts. "Keep fill as the new original" bakes the filled widths in (asks first) and turns Fill off.
 
 Tests: `node tools/test-segments.mjs` (fill math, rounding fuzz, store round-trip) and `node tools/fill-test.mjs` (browser, iPad / iPhone / desktop).
+
+## Slides ▸ PowerPoint | Keynote sub-tabs (v1.8)
+
+The Slides tab has two sub-tabs; the last one used is remembered per device (`showcrew.pixelmap.prefs` → `slidesTab`). **PowerPoint** keeps everything from v1.4–v1.7. **Keynote**:
+
+* Slide size: Document sidebar ▸ Document ▸ Slide Size ▸ Custom Slide Size ([Apple](https://support.apple.com/guide/keynote/change-the-slide-size-tan929f13a1f/mac)); Keynote measures slides in points, 1 pt = 1 slide pixel. Limits 8192 × 8192 max / 200 pt min are **community-reported** (Eric Alba, LinkedIn Oct 2023; [Stoatworks Wallslide](https://wallslide.stoatworks-labs.com/), measured) — Apple publishes none.
+* Options: 1:1 native (if it fits), exact 1/N that divide evenly, largest exact-aspect size (longest side 8192, whole-pt rounding + error back at native), ×M when under 200 pt. 11344×1080 → ★ 1/2 = 5672 × 540, 1/4 = 2836 × 270, largest 8192 × 779.915 → 780 (0.117 px off).
+* Current Keynote slide compare (W × H pt, saved per screen as `keyCur`), target output + playback fit (shared with PowerPoint), Arrange-inspector positions (pt) with copy buttons, Movie/Images export notes ([Apple](https://support.apple.com/guide/keynote/export-to-powerpoint-or-another-file-format-tana0d19882a/mac)).
+* Template: a native .key can't be generated (undocumented IWA/protobuf zip). "Keynote template (.pptx for Keynote)" is sized in points (1 pt = 12 700 EMU, exact); sizes over 4032 pt (56 in) are outside the OOXML schema — LibreOffice opens them, Keynote's import is unverified, so a ≤ 4032 pt option (e.g. 1/4) is suggested. Plus a full-size guide PNG and steps: View ▸ Edit Slide Layouts ([Apple](https://support.apple.com/guide/keynote/add-and-edit-slide-layouts-tan7a2b69972/mac)) → File ▸ Save Theme ([Apple](https://support.apple.com/guide/keynote/tanb343cb739/mac)). TXT / CSV summary.
+
+Tests: `node tools/test-segments.mjs` and `node tools/keynote-test.mjs`.

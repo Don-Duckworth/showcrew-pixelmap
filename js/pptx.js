@@ -15,7 +15,8 @@ function loadLib() {
 const hex = c => c.replace('#', '').toUpperCase();
 const f3 = v => String(Math.round(v * 1000) / 1000);
 
-/** { job, s (screen), p (slide plan from slides.js), rects [{name,x,y,w,h,kind}], fit (segFit), summary (text) } → Blob */
+/** v1.8: p may be a Keynote plan (keynotePptxPlan in app.js: keynote:true, slide in inches = pt / 72, 1 pt = 12 700 EMU).
+ *  { job, s (screen), p (slide plan from slides.js), rects [{name,x,y,w,h,kind}], fit (segFit), summary (text) } → Blob */
 export async function buildPptx({ job, s, p, rects, fit, summary }) {
   const PptxGenJS = await loadLib();
   const pptx = new PptxGenJS();
@@ -35,12 +36,13 @@ export async function buildPptx({ job, s, p, rects, fit, summary }) {
     sl.addText([
       { text: r.name, options: { bold: true, breakLine: true } },
       { text: `${r.w}×${r.h} px @ ${r.x}, ${r.y}`, options: { fontSize: fs * 0.7, breakLine: true } },
-      { text: `${f3(r.x * k)}", ${f3(r.y * k)}" · ${f3(r.w * k)}" × ${f3(r.h * k)}"`, options: { fontSize: fs * 0.6 } },
+      { text: p.keynote ? `X ${f3(r.x * k * 72)} Y ${f3(r.y * k * 72)} · ${f3(r.w * k * 72)} × ${f3(r.h * k * 72)} pt` : `${f3(r.x * k)}", ${f3(r.y * k)}" · ${f3(r.w * k)}" × ${f3(r.h * k)}"`, options: { fontSize: fs * 0.6 } },
     ], { shape: pptx.ShapeType.rect, x: r.x * k, y: r.y * k, w: r.w * k, h: r.h * k, objectName: `${seg ? 'Segment' : 'PiP'} ${r.name}`,
       fill: { color: col, transparency: seg ? 88 : 80 }, line: { color: col, width: Math.max(0.75, Math.min(3, slideHpt / 200)) },
       color: 'FFFFFF', fontFace: 'Arial', fontSize: fs, align: 'center', valign: 'middle', margin: 0 });
   }
-  sl.addText(`${s.name} ${s.w}×${s.h} · slide ${f3(p.slideW)} × ${f3(p.slideH)} in · 1 in = ${f3(p.pxPerIn)} px · ShowCrew PixelMap guide — delete before show`,
+  sl.addText(p.keynote ? `${s.name} ${s.w}×${s.h} · Keynote slide ${p.wholeW} × ${p.wholeH} pt (${p.scaleText}) · ShowCrew PixelMap guide — delete before show`
+    : `${s.name} ${s.w}×${s.h} · slide ${f3(p.slideW)} × ${f3(p.slideH)} in · 1 in = ${f3(p.pxPerIn)} px · ShowCrew PixelMap guide — delete before show`,
     { x: 0, y: 0, w: p.slideW, h: Math.min(p.slideH * 0.08, 0.6), fontSize: Math.max(6, Math.min(14, slideHpt * 0.035)), color: '7FD8EA', fontFace: 'Arial', margin: 2, objectName: 'PixelMap note' });
   sl.addNotes(summary || '');
   pptx.addSlide().background = { color: '000000' };

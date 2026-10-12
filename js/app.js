@@ -364,13 +364,13 @@ function outputCard(s) {
     <div class="row wrap qp">${picks.map(([w, h, l, scrPick]) => `<button class="btn sm ${(scrPick ? !o.custom : o.custom && o.w === w && o.h === h) ? 'on' : ''}" data-act="pptOut" data-w="${w}" data-h="${h}"${scrPick ? ' data-screen="1"' : ''}>${l}</button>`).join('')}</div>
     <p class="hint">What the show computer sends to the processor. Full screen, PowerPoint and Keynote scale the slide <b>uniformly</b> to fit this output and center it (no stretching, no cropping), so a different aspect ratio gives black bars. ${o.custom ? `Set for this screen (the screen itself is ${s.w}×${s.h}).` : 'Defaults to this screen\'s resolution.'}</p></div>`;
 }
-function playbackHtml(fit, s, rects, key) {
+function playbackHtml(fit, s, rects, key, unit = 'in') {
   if (!fit) return '';
   const F2 = SL.f2, L = rects.length ? SL.landRects(fit, s.w, s.h, rects) : [], moved = L.filter(l => l.moved), scaled = fit.outW !== s.w || fit.outH !== s.h;
   let h = `<div class="pb pb-${fit.kind}" data-pb="${key}"><div class="lbl">FULL SCREEN ON A ${fit.outW}×${fit.outH} OUTPUT</div>
     <p class="pb-h ${fit.kind === 'none' ? 'fitok' : 'warnc'}">${fit.kind === 'none' ? '✓' : '▮'} ${esc(fit.headline)}.</p>
     <div class="readout"><div><span class="lbl">RENDERED SLIDE</span><span class="v">${fit.areaText}</span><span class="r">${SL.f2(fit.coverPct)}% of the output</span></div>
-      <div><span class="lbl">SCALE</span><span class="v">${SL.f3(fit.pxPerIn)} px/in</span><span class="r">×${SL.f3(fit.scale96)} of 96 px/in · fitted by ${fit.fitBy}</span></div></div>`;
+      <div><span class="lbl">SCALE</span>${unit === 'pt' ? `<span class="v">${SL.f3(fit.pxPerIn)} px per pt</span><span class="r">output px per slide point · fitted by ${fit.fitBy}</span>` : `<span class="v">${SL.f3(fit.pxPerIn)} px/in</span><span class="r">×${SL.f3(fit.scale96)} of 96 px/in · fitted by ${fit.fitBy}</span>`}</div></div>`;
   if (!L.length) return h + '</div>';
   h += `<table class="ro sl pb-tbl"><thead><tr><th>Item</th><th>${scaled ? `Native → ${fit.outW}×${fit.outH}` : 'Native px'}</th><th>Lands at (px)</th><th>Shift</th></tr></thead><tbody>${L.map(l => `<tr class="${l.moved ? 'moved' : ''}"><td>${esc(l.name)}</td>
       <td>x ${F2(l.native.x0)}–${F2(l.native.x1)}<span class="r">y ${F2(l.native.y0)}–${F2(l.native.y1)}</span></td>
@@ -381,7 +381,7 @@ function playbackHtml(fit, s, rects, key) {
     : `<p class="fitok pb-ok">✓ Every edge stays within 1 px of its native position (largest shift ${F2(Math.max(...L.map(l => l.maxShift)))} px).</p>`;
   return h + `<p class="hint">Assumes the deck is laid out across the whole slide in proportion to the screen (like the PixelMap template)${scaled ? `; native positions are scaled ×${SL.f3(fit.outW / s.w)} W, ×${SL.f3(fit.outH / s.h)} H to the output` : ''}.</p></div>`;
 }
-function panelSlides() {
+function panelPowerPoint() {
   const s = scr(), U = slUnit(), { o, p, kp } = slidePlan(s), rects = slideRects(s), f3 = SL.f3;
   const uv = (inch, cm) => (U === 'cm' ? cm : inch);
   let html = `<div class="row between"><div class="lbl">SLIDES FOR ${esc(s.name.toUpperCase())} · ${s.w}×${s.h}</div>
@@ -412,19 +412,103 @@ function panelSlides() {
     ${rects.length ? slideTable(rects.map(r => { const q = SL.onSlide(p, r); return { r, L: q.left[U], T: q.top[U], W: q.width[U], H: q.height[U], pt: q }; }), U) : '<p class="hint">No segments or PiP boxes on this screen yet — add them in Screen / PiP Boxes.</p>'}
     <p class="hint">Position = <i>Horizontal / Vertical from Top Left Corner</i>. PowerPoint may display 2 decimals; type the 3-decimal value (0.001 in = ${f3(p.pxPerIn / 1000)} px here). Tap any value to copy it with its unit.</p></div>`;
   html += currentSlideCard(s, rects, U);
-  // --- Keynote
-  html += `<div class="card"><div class="lbl">KEYNOTE · DOCUMENT ▸ SLIDE SIZE ▸ CUSTOM</div>
-    <div class="hud-stat"><div><div class="lbl">WIDTH</div><div class="big">${cpy(f3(kp.ptW))}</div><div class="sub">pt (= slide px)</div></div><div><div class="lbl">HEIGHT</div><div class="big">${cpy(f3(kp.ptH))}</div><div class="sub">${kp.N > 1 ? `1/${kp.N} scale` : '1:1 native'}</div></div></div>
-    <p class="hint">Keynote sizes slides in points and treats 1 pt as 1 slide pixel. Apple doesn't publish a maximum; current Keynote is reported to stop at <b>8192 × 8192</b> (older versions 4000).
-    ${kp.N > 1 ? ` ${s.w}×${s.h} is over that, so build at <b>1/${kp.N}</b>${kp.whole ? '' : ' (not whole points — round to the nearest point)'}; full-screen playback on the ${s.w}×${s.h} output scales it up ×${kp.N}.` : ' This screen fits at 1:1.'}
-    Arrange inspector X / Y / W / H (pt):</p>
-    ${rects.length ? `<table class="ro sl"><thead><tr><th>Item</th><th>X</th><th>Y</th><th>W</th><th>H</th></tr></thead><tbody>${rects.map(r => { const k = SL.keynoteRect(kp, r); return `<tr><td>${esc(r.name)}</td>${[k.x, k.y, k.w, k.h].map(v => `<td>${cpy(f3(v))}</td>`).join('')}</tr>`; }).join('')}</tbody></table>` : ''}
-    <p class="hint">Opening the PowerPoint file in Keynote keeps its slide size (in points: inches × 72) instead.</p></div>`;
   // --- export summary / template
   html += `<div class="card"><div class="lbl">SUMMARY &amp; TEMPLATE</div>
     <div class="row wrap"><button class="btn sm" data-act="slideCopy">⧉ Copy summary</button><button class="btn sm" data-act="slideTxt">⤓ TXT</button><button class="btn sm" data-act="slideCsv">⤓ CSV</button><button class="btn sm primary" data-act="slidePptx">⤓ PowerPoint template (.pptx)</button></div>
     <p class="hint">The .pptx has this slide size and one labeled, outlined rectangle per segment (plus PiP boxes and any unused areas) on a guide slide, and a blank slide 2. Open it in PowerPoint or Keynote; delete the guide shapes before the show.</p></div>`;
   return html;
+}
+// v1.8: Slides = two sub-tabs, PowerPoint | Keynote (last one remembered per device in prefs)
+const slidesTab = () => (prefs.slidesTab === 'key' ? 'key' : 'ppt');
+function panelSlides() {
+  const t = slidesTab();
+  return `<div class="seg full subtabs" role="tablist">${[['ppt', 'PowerPoint'], ['key', 'Keynote']].map(([k, l]) => `<button role="tab" class="${t === k ? 'on' : ''}" data-act="slidesTab" data-k="${k}" aria-selected="${t === k}">${l}</button>`).join('')}</div>`
+    + `<div class="subpane" data-sub="${t}">${t === 'key' ? panelKeynote() : panelPowerPoint()}</div>`;
+}
+function keyPlan(s) {
+  const ko = SL.keynoteOptions(s.w, s.h);
+  return { ko, o: ko.options.find(x => x.key === ui.keyOpt) || ko.options.find(x => x.recommended) || null };
+}
+const keyPptxPlan = o => ({ keynote: true, slideW: o.wholeW / 72, slideH: o.wholeH / 72, inPerPx: o.k / 72, slideHpt: o.wholeH, pxPerIn: 72 / o.k, wholeW: o.wholeW, wholeH: o.wholeH, scaleText: o.scaleText });
+const APPLE = {
+  size: 'https://support.apple.com/guide/keynote/change-the-slide-size-tan929f13a1f/mac',
+  setup: 'https://support.apple.com/en-us/119885',
+  exp: 'https://support.apple.com/guide/keynote/export-to-powerpoint-or-another-file-format-tana0d19882a/mac',
+  layouts: 'https://support.apple.com/guide/keynote/add-and-edit-slide-layouts-tan7a2b69972/mac',
+  themes: 'https://support.apple.com/guide/keynote/tanb343cb739/mac',
+  wallslide: 'https://wallslide.stoatworks-labs.com/',
+};
+const src = (k, l) => `<a class="src" href="${APPLE[k]}" target="_blank" rel="noopener">${l}</a>`;
+function panelKeynote() {
+  const s = scr(), { ko, o } = keyPlan(s), rects = slideRects(s), OUT = outOf(s), f3 = SL.f3, F2 = SL.f2;
+  let html = `<div class="row between"><div class="lbl">KEYNOTE FOR ${esc(s.name.toUpperCase())} · ${s.w}×${s.h}</div></div>
+    <p class="hint">Keynote sets the slide size in <b>Document sidebar ▸ Document ▸ Slide Size ▸ Custom Slide Size</b> (${src('size', 'Apple')}). It measures slides in <b>points and treats 1 pt as 1 slide pixel</b> (Wide = 1920 × 1080), so a slide exported at 1× is its size in pixels. Apple publishes no limits; <b>8192 × 8192 max</b> and <b>200 pt min</b> are <i>community-reported</i> (Eric Alba, Oct 2023; ${src('wallslide', 'Stoatworks Wallslide')}, measured). At 1:1 this screen is ${s.w} × ${s.h} pt — ${ko.impossible ? '<span class="warnc">wider than 8192:200, Keynote can\'t hold this aspect</span>' : ko.fitsNative ? 'fits as-is.' : ko.tooBig ? '<span class="warnc">over 8192, so build it scaled down.</span>' : '<span class="warnc">under 200 pt, so build it scaled up.</span>'}</p>`;
+  if (!o) return html + outputCard(s) + `<p class="warn">⚠ No Keynote slide size keeps this exact ${G.aspect(s.w, s.h).decText} ratio within 200–8192 pt.</p>`;
+  // --- options + chosen size
+  html += `<div class="card keycard"><div class="lbl">KEYNOTE · DOCUMENT ▸ SLIDE SIZE ▸ CUSTOM</div>
+    ${ko.options.length > 1 ? `<div class="seg full">${ko.options.map(x => `<button class="${x === o ? 'on' : ''}" data-act="keyOpt" data-k="${x.key}">${esc(x.label)}${x.recommended ? ' ★' : ''}</button>`).join('')}</div>` : ''}
+    <div class="hud-stat"><div><div class="lbl">WIDTH</div><div class="big">${cpy(String(o.wholeW), `${o.wholeW}<small>pt</small>`)}</div><div class="sub">${o.exact ? 'whole points' : `exact ${f3(o.ptW)}`}</div></div>
+      <div><div class="lbl">HEIGHT</div><div class="big">${cpy(String(o.wholeH), `${o.wholeH}<small>pt</small>`)}</div><div class="sub">${o.exact ? (o.k === 1 ? '1:1 native' : `${o.scaleText} scale`) : `exact ${f3(o.ptH)}`}</div></div></div>
+    <p class="hint">Scale <b>${o.scaleText}</b> (×${f3(o.k)}) of ${s.w}×${s.h} · 1 slide pt = <b>${f3(1 / o.k)} screen px</b>. ${o.exact
+      ? 'Exact: every segment edge is a whole point or a clean fraction, and the size scales back to native exactly.'
+      : `<span class="warnc">The exact size is ${f3(o.ptW)} × ${f3(o.ptH)} pt; Keynote's fields take whole numbers, so type ${o.wholeW} × ${o.wholeH}. Back at native that's ${F2(o.backW)} × ${F2(o.backH)} px (${f3(o.errPx)} px off).</span>`}</p>
+    <table class="ro sl key-opts"><thead><tr><th>Option</th><th>Size pt</th><th>Scale</th><th>Back to ${s.w}×${s.h}</th></tr></thead><tbody>${ko.options.map(x => `<tr class="${x === o ? 'on' : ''}"><td>${esc(x.label)}${x.recommended ? ' ★' : ''}</td><td>${x.wholeW} × ${x.wholeH}${x.exact ? '' : `<span class="r">exact ${f3(x.ptW)} × ${f3(x.ptH)}</span>`}</td><td>${x.scaleText}</td><td>${x.errPx < 1e-6 ? '✓ exact' : `${f3(x.errPx)} px off`}</td></tr>`).join('')}</tbody></table>
+    ${playbackHtml(SL.playbackFit(o.wholeW, o.wholeH, OUT.w, OUT.h), s, rects, 'key', 'pt')}</div>`;
+  html += outputCard(s);
+  // --- current Keynote slide
+  const kc = s.keyCur, c = SL.keyCompare(s.w, s.h, kc);
+  html += `<div class="card key-cur"><div class="lbl">YOUR CURRENT KEYNOTE SLIDE SIZE (pt)</div>
+    <div class="grid2">${numInput('keycur.w', kc ? kc.w : '', 'Width pt', 'step="any" min="0" placeholder="e.g. 1920"')}${numInput('keycur.h', kc ? kc.h : '', 'Height pt', 'step="any" min="0" placeholder="e.g. 1080"')}</div>`;
+  if (!c) html += `<p class="hint">Type the size from Document ▸ Slide Size to compare it with ${s.w}×${s.h}.</p>`;
+  else {
+    html += `<div class="readout"><div><span class="lbl">YOUR SLIDE</span><span class="v">${f3(c.slideAspect)}:1</span><span class="r">${F2(c.cw)} × ${F2(c.ch)} pt</span></div><div><span class="lbl">SCREEN</span><span class="v">${f3(c.screenAspect)}:1</span><span class="r">${s.w}×${s.h} px</span></div></div>`;
+    if (c.tooBig || c.tooSmall) html += `<p class="warn">⚠ Outside the community-reported 200–8192 pt range.</p>`;
+    html += c.match ? `<p class="fitok">✓ Same aspect ratio as the screen — 1 slide pt = ${f3(s.w / c.cw)} screen px.</p>`
+      : `<div class="fitwarn warn"><div class="fw-h">⚠ ASPECT MISMATCH <span>${c.diffPct > 0 ? '+' : ''}${c.diffPct.toFixed(2)}%</span></div><ul><li>Your slide is ${c.diffPct > 0 ? 'wider' : 'taller'} than the screen.</li>
+        <li>Keep your width → height ${cpy(F2(c.keepWidthH), `<b>${F2(c.keepWidthH)} pt</b>`)}; keep your height → width ${cpy(F2(c.keepHeightW), `<b>${F2(c.keepHeightW)} pt</b>`)}; or use the ★ size above (${o.wholeW} × ${o.wholeH} pt).</li></ul></div>`;
+    html += playbackHtml(SL.playbackFit(c.cw, c.ch, OUT.w, OUT.h), s, rects, 'kcur', 'pt');
+  }
+  html += '</div>';
+  // --- back to native
+  const pf = SL.playbackFit(o.wholeW, o.wholeH, OUT.w, OUT.h);
+  html += `<div class="card key-native"><div class="lbl">BACK TO ${s.w}×${s.h} NATIVE PIXELS</div><ul class="steps">
+    <li><b>Play full screen</b> on the ${OUT.w}×${OUT.h} output: current Keynote scales the slide uniformly to fit the presentation display and centers it — ${esc(pf.headline)}. (Older Keynote played a smaller slide at its own size, centered in a black border, unless <i>Scale slides up to fit display</i> was on — Apple's Keynote '08 guide.)</li>
+    <li><b>Movie:</b> File ▸ Export To ▸ Movie ▸ Resolution ▸ <b>Custom</b> ▸ ${cpy(String(s.w))} × ${cpy(String(s.h))} (${src('exp', 'Apple')}). Apple doesn't document a maximum movie size; very wide rasters can exceed a codec's limit, so test the file on the media server.</li>
+    <li><b>Images:</b> File ▸ Export To ▸ Images — Apple's guide lists slide range and format only; the images come out at the slide size, here <b>${o.wholeW}×${o.wholeH} px</b>${o.k === 1 ? ' = native.' : ` — scale them ×${f3(1 / o.k)} to ${s.w}×${s.h} afterwards, or build at 1:1 if the screen fits 8192.`}</li></ul></div>`;
+  // --- Arrange inspector positions
+  html += `<div class="card key-pos"><div class="lbl">ARRANGE INSPECTOR · FORMAT ▸ ARRANGE (pt)</div>
+    ${rects.length ? `<table class="ro sl"><thead><tr><th>Item</th><th>X</th><th>Y</th><th>W</th><th>H</th></tr></thead><tbody>${rects.map(r => { const q = SL.keyRect(o, r); return `<tr><td>${esc(r.name)}<span class="r">${G.fmt1(r.x)}, ${G.fmt1(r.y)} · ${G.fmt1(r.w)}×${G.fmt1(r.h)} px</span></td>${[q.x, q.y, q.w, q.h].map(v => `<td>${cpy(f3(v))}</td>`).join('')}</tr>`; }).join('')}</tbody></table>` : '<p class="hint">No segments or PiP boxes yet.</p>'}
+    <p class="hint">Position X / Y = the object's top-left corner measured from the slide's top-left; Size W / H. Tap a value to copy it.</p></div>`;
+  // --- template + exports
+  const inSchema = ko.options.find(x => !x.overOoxml);
+  html += `<div class="card key-tpl"><div class="lbl">KEYNOTE TEMPLATE &amp; SUMMARY</div>
+    <div class="row wrap"><button class="btn sm primary" data-act="keyPptx">⤓ Keynote template (.pptx for Keynote)</button><button class="btn sm" data-act="keyPng">⤓ Guide PNG ${o.wholeW}×${o.wholeH}</button></div>
+    <div class="row wrap"><button class="btn sm" data-act="keyCopy">⧉ Copy summary</button><button class="btn sm" data-act="keyTxt">⤓ TXT</button><button class="btn sm" data-act="keyCsv">⤓ CSV</button></div>
+    <p class="hint">A native <b>.key can't be made in the browser</b>: since Keynote 6 (2013) it's an undocumented zip of compressed protobuf (IWA) files. Keynote opens <b>.pptx</b> and keeps the slide size. 1 in = 72 pt, so the template is exactly <b>${o.wholeW} × ${o.wholeH} pt = ${o.emuW.toLocaleString('en-US')} × ${o.emuH.toLocaleString('en-US')} EMU</b> (12 700 EMU per pt) with one labeled rectangle per segment / PiP box.</p>
+    ${o.overOoxml ? `<p class="warn">⚠ ${o.wholeW} pt is over 4032 pt (56 in), the slide limit in the OOXML schema that PowerPoint enforces. LibreOffice opens the file (tested); <b>Keynote's import of an oversize .pptx isn't verified</b>. If Keynote refuses or shrinks it, ${inSchema ? `choose <b>${esc(inSchema.label)}</b> (${inSchema.wholeW} × ${inSchema.wholeH} pt, inside the limit) or ` : ''}use the guide PNG steps below.</p>` : ''}
+    <ol class="steps">
+      <li>Open the .pptx in Keynote (File ▸ Open) and check Document ▸ Slide Size reads <b>${o.wholeW} × ${o.wholeH}</b> — or start a new deck and set Custom Slide Size to ${cpy(String(o.wholeW))} × ${cpy(String(o.wholeH))}.</li>
+      <li>Make the guide a master: <b>View ▸ Edit Slide Layouts</b>, select a layout (e.g. Blank), drag in the guide PNG and set Format ▸ Arrange to X 0, Y 0, W ${o.wholeW}, H ${o.wholeH}. Click Done (${src('layouts', 'Apple')}).</li>
+      <li><b>File ▸ Save Theme ▸ Add to Theme Chooser</b> — only slide-layout changes go into a theme (${src('themes', 'Apple')}).</li>
+      <li>New decks: File ▸ New ▸ My Themes ▸ your theme. Hide or delete the guide image on the layout before the show.</li></ol></div>`;
+  return html;
+}
+function keySummaryText(s) {
+  const { ko, o } = keyPlan(s), rects = slideRects(s), f3 = SL.f3, OUT = outOf(s), j = job();
+  const L = [`ShowCrew PixelMap — ${j.name} — ${s.name} ${s.w}×${s.h} px — Keynote`, ''];
+  if (!o) return L.concat('No Keynote slide size keeps this aspect ratio within 200–8192 pt.').join('\n');
+  L.push(`Keynote slide size (Document > Slide Size > Custom Slide Size): ${o.wholeW} × ${o.wholeH} pt  (${o.label}; scale ${o.scaleText}; 1 pt = ${f3(1 / o.k)} screen px${o.exact ? '' : `; exact ${f3(o.ptW)} × ${f3(o.ptH)}, ${f3(o.errPx)} px off at native`})`);
+  L.push(`Options: ${ko.options.map(x => `${x.label} ${x.wholeW}×${x.wholeH}${x.exact ? '' : ' (rounded)'}`).join(' | ')}`);
+  L.push('Limits: max 8192 × 8192, min 200 pt (community-reported; Apple publishes none)');
+  const pf = SL.playbackFit(o.wholeW, o.wholeH, OUT.w, OUT.h);
+  L.push(`Full screen on ${OUT.w}×${OUT.h}: ${pf.headline}; slide renders ${pf.areaText}`);
+  L.push(`Movie export: File > Export To > Movie > Resolution > Custom ${s.w} × ${s.h}. Images export at the slide size (${o.wholeW}×${o.wholeH}).`);
+  const fit = G.segFit(s); if (!fit.exact) { L.push('', 'Segment fit warnings:'); fit.issues.forEach(i => L.push('  ! ' + i.text)); }
+  L.push('', 'Arrange inspector (pt) — X, Y, W, H | px X, Y, W, H');
+  for (const r of rects) { const q = SL.keyRect(o, r); L.push(`  ${r.name}: ${[q.x, q.y, q.w, q.h].map(f3).join(', ')} | ${[r.x, r.y, r.w, r.h].map(f3).join(', ')}`); }
+  const c = SL.keyCompare(s.w, s.h, s.keyCur);
+  if (c) L.push('', `Current Keynote slide ${SL.f2(c.cw)} × ${SL.f2(c.ch)} pt: aspect ${f3(c.slideAspect)}:1 vs screen ${f3(c.screenAspect)}:1 (${c.diffPct.toFixed(2)}%)`);
+  return L.join('\n');
 }
 function slideTable(rows, U) {
   return `<table class="ro sl"><thead><tr><th>Item</th><th>Left</th><th>Top</th><th>Width</th><th>Height</th></tr></thead><tbody>${rows.map(({ r, L, T, W, H }) => `<tr><td>${esc(r.name)}<span class="r">${G.fmt1(r.x)}, ${G.fmt1(r.y)} · ${G.fmt1(r.w)}×${G.fmt1(r.h)} px</span></td>${[L, T, W, H].map(v => `<td>${cpy(`${SL.f3(v)} ${U}`, SL.f3(v))}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
@@ -1032,6 +1116,31 @@ const ACTIONS = {
   pptOut: el => { const s = scr(); s.pptOut = el.dataset.screen ? null : { w: +el.dataset.w, h: +el.dataset.h }; commit(['panel']); },
   pptOpt: el => { ui.pptOpt = el.dataset.k; render(['panel']); },
   pptCurUnit: el => { const s = scr(); if (s.pptCur) { s.pptCur.unit = el.dataset.u; commit(['panel']); } else { ui.pptCurUnit = el.dataset.u; prefs.slideUnit = el.dataset.u; savePrefs(); render(['panel']); } },
+  slidesTab: el => { prefs.slidesTab = el.dataset.k === 'key' ? 'key' : 'ppt'; savePrefs(); render(['panel']); },
+  keyOpt: el => { ui.keyOpt = el.dataset.k; render(['panel']); },
+  keyCopy: () => { copyLong(keySummaryText(scr())); },
+  keyTxt: () => { const s = scr(); shareOrDownload([new File([keySummaryText(s)], `${fileSafe(job().name)}_${fileSafe(s.name)}_keynote.txt`, { type: 'text/plain' })]); },
+  keyCsv: () => { const s = scr(), { o } = keyPlan(s); if (!o) return toast('No valid Keynote size for this aspect ratio');
+    shareOrDownload([new File([SL.toCsv(SL.keySummaryRows(s, o, slideRects(s)))], `${fileSafe(job().name)}_${fileSafe(s.name)}_keynote.csv`, { type: 'text/csv' })]); },
+  keyPptx: async () => {
+    const s = scr(), { o } = keyPlan(s); if (!o) return toast('No valid Keynote size for this aspect ratio');
+    toast('Building Keynote template…');
+    try {
+      const blob = await buildPptx({ job: job(), s, p: keyPptxPlan(o), rects: slideRects(s), fit: G.segFit(s), summary: keySummaryText(s) });
+      const f = new File([blob], `${fileSafe(job().name)}_${fileSafe(s.name)}_Keynote_${o.wholeW}x${o.wholeH}pt.pptx`, { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
+      ui.lastKeyPptx = f; await shareOrDownload([f]);
+    } catch (e) { toast('Template failed: ' + e.message); }
+  },
+  keyPng: async () => {
+    const s = scr(), { o } = keyPlan(s); if (!o) return toast('No valid Keynote size for this aspect ratio');
+    const c = G.resizeScreen(s, o.wholeW, o.wholeH, 'scale'), ex = job().exportSettings;
+    const ex2 = { ...ex, inc: { ...ex.inc, bg: true, outline: true, segDividers: true, labels: true, coordLabels: true, boxes: true, unused: true } };
+    try {
+      const blob = await screenToBlob(c, ex2, 'tl');
+      const f = new File([blob], `${fileSafe(job().name)}_${fileSafe(s.name)}_Keynote_${o.wholeW}x${o.wholeH}_guide.png`, { type: 'image/png' });
+      ui.lastKeyPng = f; await shareOrDownload([f]);
+    } catch (e) { toast('Guide PNG failed: ' + e.message); }
+  },
   slideCopy: () => { copyLong(slideSummaryText(scr())); },
   slideTxt: () => { const s = scr(); shareOrDownload([new File([slideSummaryText(s)], `${fileSafe(job().name)}_${fileSafe(s.name)}_slides.txt`, { type: 'text/plain' })]); },
   slideCsv: () => {
@@ -1100,6 +1209,10 @@ document.addEventListener('change', e => {
     return commit();
   }
   if (ns === 'segtool') { if (k === 'gap') ui.segGap = n; else ui.segSplit = n; return; }
+  if (ns === 'keycur') {
+    const kc = s.keyCur || { w: null, h: null }; kc[k] = v === '' || !(n > 0) ? null : n;
+    s.keyCur = kc.w || kc.h ? kc : null; return commit(['panel']);
+  }
   if (ns === 'pptout') {
     const o = outOf(s), x = int(n, 1, 65536); if (!x || v === '') return render(['panel']);
     o[k] = x; s.pptOut = o.w === s.w && o.h === s.h ? null : { w: o.w, h: o.h };
@@ -1147,7 +1260,7 @@ new ResizeObserver(() => drawStage()).observe(wrap);
 if (syncConfigured) { renderSync(); sync.init(); authLinkError(); }
 window.addEventListener('orientationchange', () => setTimeout(drawStage, 300));
 render();
-window.__pm = { get S() { return S; }, ui, G, SL, render, slideSummaryText, job, scr, ACTIONS, screenToBlob, sync };
+window.__pm = { get S() { return S; }, ui, G, SL, render, slideSummaryText, keySummaryText, keyPlan, prefs, job, scr, ACTIONS, screenToBlob, sync };
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW registration failed', e));

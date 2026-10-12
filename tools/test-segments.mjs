@@ -298,4 +298,33 @@ t('slides: positions use the active layout', () => {
   const L = SL.landRects(SL.playbackFit(55.561, 5.28, 11344, 1080), 11344, 1080, G.segments(s).map(g => ({ name: g.name, x: g.x0, y: g.y0, w: g.w, h: g.h })));
   assert.deepEqual(L.map(l => Math.round(l.out.x1)), [3511, 7833, 11344]);
 });
+// ---------- v1.8 Keynote ----------
+t('keynote options: Don 11344×1080 → 1/2 5672×540 ★ (exact), 1/4 2836×270, largest 8192×779.915 → 780', () => {
+  const ko = SL.keynoteOptions(11344, 1080); assert.ok(ko.tooBig && !ko.fitsNative);
+  assert.deepEqual(ko.options.map(o => [o.key, o.wholeW, o.wholeH, o.exact, !!o.recommended]), [['exact2', 5672, 540, true, true], ['exact4', 2836, 270, true, false], ['max', 8192, 780, false, false]]);
+  const m = ko.options[2]; near(m.k, 8192 / 11344, 1e-12); near(m.ptH, 1080 * 8192 / 11344, 1e-9); near(m.ptH, 779.915, 1e-3); near(m.backH, 780 * 11344 / 8192, 1e-9); near(m.errPx, 0.117, 1e-3);
+  assert.equal(ko.options[0].emuW, 5672 * 12700); assert.equal(ko.options[0].emuH, 540 * 12700); assert.ok(ko.options[0].overOoxml); assert.ok(!ko.options[1].overOoxml);
+  assert.equal(ko.options[0].scaleText, '1/2'); assert.equal(ko.options[0].errPx, 0);
+});
+t('keynote options: native, too small, no whole 1/N, impossible', () => {
+  let ko = SL.keynoteOptions(1920, 1080); assert.equal(ko.options[0].key, 'native'); assert.ok(ko.options[0].recommended); assert.deepEqual(ko.options.slice(1).map(o => o.N), [2, 3, 4, 5]);
+  ko = SL.keynoteOptions(8192, 8192); assert.equal(ko.options[0].key, 'native');
+  ko = SL.keynoteOptions(100, 50); assert.deepEqual(ko.options.map(o => [o.key, o.wholeW, o.wholeH]), [['up', 400, 200]]);
+  ko = SL.keynoteOptions(8193, 1000); assert.deepEqual(ko.options.map(o => [o.key, o.exact]), [['fit2', false], ['max', false]]); assert.equal(ko.options.find(o => o.recommended).key, 'max');
+  ko = SL.keynoteOptions(100000, 100); assert.ok(ko.impossible); assert.equal(ko.options.length, 0);
+});
+t('keynote positions + compare + summary rows', () => {
+  const o = SL.keynoteOptions(11344, 1080).options[0];
+  assert.deepEqual(SL.keyRect(o, { name: 'Center', x: 3510, y: 0, w: 4320, h: 1080 }), { name: 'Center', x: 1755, y: 0, w: 2160, h: 540 });
+  const c = SL.keyCompare(11344, 1080, { w: 5672, h: 540 }); assert.ok(c.match);
+  const d = SL.keyCompare(11344, 1080, { w: 1920, h: 1080 }); assert.ok(!d.match); near(d.diffPct, (1920 / 1080) / (11344 / 1080) * 100 - 100, 1e-9); near(d.keepWidthH, 1920 * 1080 / 11344, 1e-9);
+  assert.equal(SL.keyCompare(1, 1, null), null);
+  const rows = SL.keySummaryRows({ w: 11344, h: 1080 }, o, [{ name: 'Center', x: 3510, y: 0, w: 4320, h: 1080 }]);
+  assert.deepEqual(rows[1], ['Slide', '0', '0', '5672', '540', '0', '0', '11344', '1080']); assert.deepEqual(rows[2], ['Center', '1755', '0', '2160', '540', '3510', '0', '4320', '1080']);
+  const f = SL.playbackFit(5672, 540, 11344, 1080); assert.equal(f.kind, 'none'); near(f.pxPerIn, 2, 1e-12);   // unit-agnostic: 2 output px per slide pt
+});
+t('store: keyCur kept, optional', () => {
+  const j = Store.sanitizeJob({ name: 'x', screens: [{ name: 'S', w: 10, h: 10, keyCur: { w: '1920', h: 1080 } }, { name: 'T', w: 10, h: 10, keyCur: { w: -1 } }, { name: 'U', w: 10, h: 10 }] });
+  assert.deepEqual(j.screens.map(s => s.keyCur), [{ w: 1920, h: 1080 }, null, null]);
+});
 console.log(`segment + slide tests passed (${n} groups)`);

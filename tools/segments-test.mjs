@@ -130,8 +130,10 @@ const cur = await A.page.locator('.cur-slide').innerText();
 ok(/ASPECT MISMATCH/.test(cur) && cur.includes('10.523:1') && cur.includes('10.504:1') && cur.includes('+0.18%'), 'iPad: current slide 55.561 × 5.28 → mismatch 10.523 vs 10.504 (+0.18%)');
 ok(cur.includes('5.29 in') && cur.includes('1078') && cur.includes('17.191'), 'iPad: keep-width height 5.29 in, 11344×1078 image, Center at 17.191 in on his slide');
 // Keynote
-const kn = await A.page.locator('.card', { hasText: 'KEYNOTE · DOCUMENT' }).first().innerText();
+await click(A, '[data-act=slidesTab][data-k=key]'); await sleep(150);   // v1.8: Keynote has its own sub-tab
+const kn = await A.page.locator('.card', { hasText: 'KEYNOTE · DOCUMENT' }).first().innerText() + await A.page.locator('.key-pos').innerText();
 ok(kn.includes('5672') && kn.includes('540') && kn.includes('1755') && kn.includes('2160') && kn.includes('8192'), 'iPad: Keynote 5672 × 540 pt (1/2), Center X 1755 W 2160, max 8192 noted');
+await click(A, '[data-act=slidesTab][data-k=ppt]'); await sleep(150);
 await A.page.locator('.pptcard').scrollIntoViewIfNeeded();
 await A.page.evaluate(() => { document.querySelector('#panelBody').scrollTop = 0; });
 await A.page.screenshot({ path: OUT + 'ipad-slides-powerpoint.png' });

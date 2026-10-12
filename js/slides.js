@@ -22,7 +22,7 @@
 //    old Keynote ('08) capped at 4000. https://support.apple.com/guide/keynote/change-the-slide-size-tan929f13a1f/mac
 
 export const PPT = { PX_PER_IN: 96, PT_PER_IN: 72, CM_PER_IN: 2.54, EMU_PER_IN: 914400, MAX_IN: 56, MIN_IN: 1, MAX_BITMAP_PX: 100000000, OLD_MAX_EDGE: 3072 };
-export const KEYNOTE = { MAX_PT: 8192, OLD_MAX_PT: 4000 };
+export const KEYNOTE = { MAX_PT: 8192, OLD_MAX_PT: 4000, MIN_PT: 200, EMU_PER_PT: 12700, OOXML_MAX_PT: 4032 };
 
 const isInt = v => Math.abs(v - Math.round(v)) < 1e-6;
 export const r3 = v => Math.round(v * 1000) / 1000;
@@ -214,4 +214,70 @@ export function landRects(fit, screenW, screenH, rects) {
     const maxShift = Math.max(...Object.values(shift).map(Math.abs));
     return { name: r.name, kind: r.kind, native: n, out: o, w: o.x1 - o.x0, h: o.y1 - o.y0, shift, maxShift, flags, moved: flags.length > 0 };
   });
+}
+
+// ---------- v1.8: Keynote, full treatment ----------
+// Facts (checked Oct 2026):
+//  • Slide size: Document sidebar ▸ Document tab ▸ Slide Size ▸ Custom Slide Size, type width × height, OK. (Apple, "Change the slide size in
+//    Keynote on Mac" https://support.apple.com/guide/keynote/change-the-slide-size-tan929f13a1f/mac and "Set up your presentation in Keynote"
+//    https://support.apple.com/en-us/119885.) Keynote measures slides in points and treats 1 pt as 1 slide pixel (Wide = 1920 × 1080).
+//  • Limits: Apple publishes none. COMMUNITY-REPORTED: max 8192 × 8192 (Eric Alba, LinkedIn, Oct 2023, macOS Sonoma; Stoatworks "Wallslide"
+//    measured 200–8192 pt by asking Keynote until it refused, https://wallslide.stoatworks-labs.com/). Keynote '08 era: 4000.
+//  • Export: File ▸ Export To ▸ Movie has a Resolution pop-up with Custom (enter width/height); File ▸ Export To ▸ Images lets you pick slides and
+//    format (Apple, "Export to PowerPoint or another file format", https://support.apple.com/guide/keynote/export-to-powerpoint-or-another-file-format-tana0d19882a/mac)
+//    — the guide lists no size field for Images; images come out at the slide size (Apple Community answers).
+//  • Playback: Keynote '08 guide (Apple): a slide smaller than the display plays at its original size, centered, with a black border unless
+//    "Scale slides up to fit display" is on. Current Keynote scales the slide uniformly to fit the presentation display (black bars when the aspect differs).
+//  • .key can't be generated offline: since Keynote 6 (2013) it's an undocumented zip of Snappy-compressed protobuf (IWA) files.
+//    Keynote opens .pptx and keeps the slide size; 1 in = 72 pt, so 1 pt = 12 700 EMU and a W-pt slide is W × 12 700 EMU wide (exact).
+//    PowerPoint's / the OOXML schema's slide limit is 56 in = 4032 pt (51 206 400 EMU); a Keynote size above that is outside the schema.
+//  • Theme: View ▸ Edit Slide Layouts (add the guide image to a layout), then File ▸ Save Theme ▸ Add to Theme Chooser.
+//    https://support.apple.com/guide/keynote/add-and-edit-slide-layouts-tan7a2b69972/mac · https://support.apple.com/guide/keynote/tanb343cb739/mac
+
+function kOpt(key, label, w, h, k, extra = {}) {
+  const ptW = w * k, ptH = h * k, wholeW = Math.max(1, Math.round(ptW)), wholeH = Math.max(1, Math.round(ptH)), exact = isInt(ptW) && isInt(ptH);
+  const backW = wholeW / k, backH = wholeH / k;
+  return { key, label, k, ptW, ptH, wholeW, wholeH, exact, backW, backH, errPx: Math.max(Math.abs(backW - w), Math.abs(backH - h)),
+    scaleText: k === 1 ? '1:1' : extra.N ? `1/${extra.N}` : extra.M ? `×${extra.M}` : `×${f3(k)}`,
+    emuW: wholeW * KEYNOTE.EMU_PER_PT, emuH: wholeH * KEYNOTE.EMU_PER_PT, overOoxml: wholeW > KEYNOTE.OOXML_MAX_PT || wholeH > KEYNOTE.OOXML_MAX_PT,
+    fits: wholeW <= KEYNOTE.MAX_PT && wholeH <= KEYNOTE.MAX_PT && wholeW >= KEYNOTE.MIN_PT && wholeH >= KEYNOTE.MIN_PT, ...extra };
+}
+/**
+ * Keynote options for a W×H px screen (max 8192, min 200 pt — community-reported):
+ *  native — 1:1 when it fits;  exact — 1/N where W/N and H/N are whole points (up to 4, smallest first);
+ *  max — the largest size that keeps the exact aspect (longest side 8192), with whole-pt rounding and its error back at native;
+ *  up — ×M when a side is under 200 pt;  fitN — smallest 1/N that fits when no 1/N divides evenly (not whole, flagged).
+ */
+export function keynoteOptions(w, h) {
+  const MAX = KEYNOTE.MAX_PT, MIN = KEYNOTE.MIN_PT, big = Math.max(w, h), small = Math.min(w, h), out = { w, h, options: [] };
+  out.fitsNative = big <= MAX && small >= MIN; out.tooBig = big > MAX; out.tooSmall = small < MIN;
+  out.impossible = big / small > MAX / MIN + 1e-9;
+  if (out.impossible) return out;
+  if (out.fitsNative) out.options.push(kOpt('native', '1:1 native', w, h, 1));
+  if (!out.tooSmall) {
+    const n0 = Math.max(2, Math.ceil(big / MAX - 1e-9)); let found = 0;
+    for (let N = n0; N <= 64 && found < 4 && small / N >= MIN - 1e-9; N++) if (w % N === 0 && h % N === 0) { out.options.push(kOpt('exact' + N, `1/${N} exact`, w, h, 1 / N, { N })); found++; }
+    if (out.tooBig && !found) { const N = n0; if (small / N >= MIN) out.options.push(kOpt('fit' + N, `1/${N} (not whole)`, w, h, 1 / N, { N })); }
+  }
+  if (out.tooBig) { const k = MAX / big, o = kOpt('max', 'Largest (8192 side)', w, h, k); o.fits = o.wholeH >= MIN && o.wholeW >= MIN; if (o.fits) out.options.push(o); }
+  if (out.tooSmall) { const M = Math.ceil(MIN / small - 1e-9); if (big * M <= MAX) out.options.push(kOpt('up', `×${M} (side under 200 pt)`, w, h, M, { M })); }
+  const rec = out.options.find(o => o.key === 'native') || out.options.find(o => o.N && o.exact && o.fits) || out.options.find(o => o.key === 'max') || out.options[0];
+  if (rec) rec.recommended = true;
+  return out;
+}
+/** A screen rect (px) in Keynote's Arrange inspector units (pt; X/Y = top-left from the slide's top-left) for option o. */
+export const keyRect = (o, r) => ({ name: r.name, x: r.x * o.k, y: r.y * o.k, w: r.w * o.k, h: r.h * o.k });
+/** The user's current Keynote slide (W × H pt) vs the screen. */
+export function keyCompare(w, h, cur) {
+  if (!cur || !(cur.w > 0 && cur.h > 0)) return null;
+  const slideAspect = cur.w / cur.h, screenAspect = w / h, diffPct = (slideAspect / screenAspect - 1) * 100;
+  return { cw: +cur.w, ch: +cur.h, slideAspect, screenAspect, diffPct, match: Math.abs(diffPct) < 0.01, keepWidthH: cur.w * h / w, keepHeightW: cur.h * w / h,
+    scale: Math.min(w / cur.w, h / cur.h), tooBig: Math.max(cur.w, cur.h) > KEYNOTE.MAX_PT, tooSmall: Math.min(cur.w, cur.h) < KEYNOTE.MIN_PT };
+}
+/** Keynote summary rows (CSV/TXT). */
+export function keySummaryRows(s, o, rects) {
+  const rows = [['Item', 'X pt', 'Y pt', 'W pt', 'H pt', 'X px', 'Y px', 'W px', 'H px']];
+  rows.push(['Slide', '0', '0', String(o.wholeW), String(o.wholeH), '0', '0', String(s.w), String(s.h)]);
+  for (const r of rects) { const q = keyRect(o, r); rows.push([r.name, f3(q.x), f3(q.y), f3(q.w), f3(q.h), f3(r.x), f3(r.y), f3(r.w), f3(r.h)]); }
+  return rows;
 }
