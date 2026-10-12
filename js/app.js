@@ -1262,6 +1262,29 @@ window.addEventListener('orientationchange', () => setTimeout(drawStage, 300));
 render();
 window.__pm = { get S() { return S; }, ui, G, SL, render, slideSummaryText, keySummaryText, keyPlan, prefs, job, scr, ACTIONS, screenToBlob, sync };
 
+// v1.8.1: version tag in the top bar. Single source of truth = VERSION in sw.js:
+//  • "active" = what the running service worker (the cache this device uses) reports via postMessage;
+//  • "server" = VERSION parsed from the live sw.js (fetched past the cache). If they differ, an update is on its way (tag turns amber).
+const verShort = v => (v || '').replace(/^scpm-/, '');
+function activeSwVersion() {
+  const c = navigator.serviceWorker && navigator.serviceWorker.controller; if (!c) return Promise.resolve(null);
+  return new Promise(res => {
+    const ch = new MessageChannel(), t = setTimeout(() => res(null), 1500);
+    ch.port1.onmessage = e => { clearTimeout(t); res((e.data && e.data.version) || null); };
+    try { c.postMessage({ type: 'version' }, [ch.port2]); } catch { clearTimeout(t); res(null); }
+  });
+}
+const serverSwVersion = () => !navigator.onLine ? Promise.resolve(null) : fetch('./sw.js?v=' + Date.now(), { cache: 'no-store' }).then(r => (r.ok ? r.text() : '')).then(t => (t.match(/VERSION\s*=\s*'([^']+)'/) || [])[1] || null).catch(() => null);
+async function showVersion() {
+  const el = $('#appVer'); if (!el) return;
+  const [act, srv] = await Promise.all([activeSwVersion(), serverSwVersion()]);
+  const v = act || srv, stale = !!(act && srv && act !== srv);
+  el.textContent = v ? (stale ? `${verShort(act)} → ${verShort(srv)}` : verShort(v)) : '';
+  el.dataset.active = act || ''; el.dataset.server = srv || ''; el.classList.toggle('stale', stale);
+  el.title = `PixelMap ${verShort(v)}\nThis device (service worker cache): ${act || 'not installed yet'}\nLatest on the server: ${srv || 'unknown (offline)'}${stale ? '\nUpdate downloading — reload to switch.' : ''}`;
+}
+showVersion(); window.addEventListener('online', () => showVersion());
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW registration failed', e));
+  navigator.serviceWorker.addEventListener('controllerchange', () => showVersion());
+  navigator.serviceWorker.register('./sw.js').then(() => navigator.serviceWorker.ready).then(() => setTimeout(showVersion, 300)).catch(e => console.warn('SW registration failed', e));
 }

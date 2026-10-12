@@ -1,5 +1,5 @@
 // ShowCrew PixelMap service worker — offline app shell.
-const VERSION = 'scpm-v1.8.0';
+const VERSION = 'scpm-v1.8.1';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/geometry.js', './js/render.js', './js/store.js', './js/config.js', './js/sync.js', './js/slides.js', './js/pptx.js',
@@ -13,9 +13,14 @@ self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 // Stale-while-revalidate for same-origin GETs; navigations fall back to cached index.html offline.
+// The page asks the ACTIVE worker which cache version it serves (shown in the top bar) — VERSION above is the single source of truth.
+self.addEventListener('message', e => {
+  if (e.data && e.data.type === 'version') (e.ports && e.ports[0] ? e.ports[0] : e.source).postMessage({ type: 'version', version: VERSION });
+});
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
+  if (new URL(req.url).pathname.endsWith('/sw.js')) return;   // always from the network (version check), never cached
   e.respondWith((async () => {
     const cache = await caches.open(VERSION);
     const cached = await cache.match(req, { ignoreSearch: true }) || (req.mode === 'navigate' ? await cache.match('./index.html') : null);

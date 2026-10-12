@@ -134,3 +134,7 @@ The Slides tab has two sub-tabs; the last one used is remembered per device (`sh
 * Template: a native .key can't be generated (undocumented IWA/protobuf zip). "Keynote template (.pptx for Keynote)" is sized in points (1 pt = 12 700 EMU, exact); sizes over 4032 pt (56 in) are outside the OOXML schema — LibreOffice opens them, Keynote's import is unverified, so a ≤ 4032 pt option (e.g. 1/4) is suggested. Plus a full-size guide PNG and steps: View ▸ Edit Slide Layouts ([Apple](https://support.apple.com/guide/keynote/add-and-edit-slide-layouts-tan7a2b69972/mac)) → File ▸ Save Theme ([Apple](https://support.apple.com/guide/keynote/tanb343cb739/mac)). TXT / CSV summary.
 
 Tests: `node tools/test-segments.mjs` and `node tools/keynote-test.mjs`.
+
+## Version tag (v1.8.1)
+
+The top bar shows the version next to the PIXELMAP wordmark (e.g. `v1.8.1`). Single source of truth: `VERSION` in `sw.js`. The page asks the **active** service worker (the cache this device runs) for its VERSION via `postMessage`, and also reads the live `sw.js` (never cached). If the device is behind the server the tag turns amber, e.g. `v1.8.0 → v1.8.1` (reload to switch); the tooltip shows both. With no service worker yet it shows the server version. Test: `node tools/version-test.mjs`.
